@@ -4,48 +4,7 @@ Blender MaterialX Importer loads MaterialX documents into Blender materials.
 
 It is designed as a practical MaterialX-to-Blender compiler: the goal is a faithful Blender material that renders like the source, not a 1:1 reconstruction of every XML element or nodegraph detail from the original `.mtlx` file.
 
-## Philosophy
-
-MaterialX and Blender do not have identical shader graphs, node contracts, renderer semantics, or standard-library implementations. This importer treats that mismatch directly:
-
-- It maps MaterialX surface models and nodes to the Blender material graph that best preserves visual behavior.
-- It uses Blender-native shader nodes when they are a good match.
-- It emits warnings when it falls back to approximate behavior.
-- It does not try to preserve the original MaterialX file as a round-trippable Blender node tree.
-
-The best results come from Blender builds that include native MaterialX shader nodes. In particular, procedural MaterialX noise, fractal, cell noise, Worley noise, and unified noise nodes can be reproduced much more accurately when Blender exposes matching `ShaderNodeMx*` nodes. Without those nodes, the importer remains useful, but some nodes are approximated with Blender's built-in procedural textures.
-
-## Status
-
-This project is early and intentionally focused. It currently targets material import for rendering and look-development workflows, not full MaterialX document editing.
-
-Current surface coverage includes:
-
-- `standard_surface`
-- `gltf_pbr`
-- `open_pbr_surface`
-
-Node support is broad enough for many sample materials, but coverage should be treated as empirical. The highest-confidence signal is the external fidelity suite described below.
-
-## Validation
-
-Rendering fidelity is validated outside this repository by the [`material-fidelity`](https://github.com/bhouston/material-fidelity) test suite.
-
-That suite renders MaterialX samples through multiple renderers and compares output images against MaterialX references. This importer is exercised there through Blender renderers for:
-
-- Cycles, using the importer and custom MaterialX nodes where available.
-- Eevee, using the same importer and custom MaterialX nodes where available.
-- Stock or less-specialized Blender configurations, where fallback behavior is expected for some nodes.
-
-Keeping validation in `material-fidelity` keeps this repository focused on the importer while allowing reproducibility tests, renderer setup, sample assets, image metrics, and visual reports to evolve independently.
-
-## Requirements
-
-- Blender with Python support.
-- Blender's bundled `MaterialX` Python module.
-- Optional but recommended: a Blender build with native/custom MaterialX shader nodes for best procedural fidelity.
-
-This package is meant to run inside Blender's Python interpreter. The `bpy` module is provided by Blender and is not installed from PyPI.
+This importer is validated with the [`MaterialX Fidelity Suite`](https://github.com/bhouston/material-fidelity), which renders MaterialX samples through Blender Cycles and Eevee and compares the results against reference MaterialX renders.
 
 ## Quick Start
 
@@ -71,6 +30,53 @@ The return value is a `MaterialImportResult`:
 
 - `material`: the created `bpy.types.Material`.
 - `warnings`: non-fatal import warnings, including fallback and unsupported-feature notices.
+
+## Philosophy
+
+MaterialX and Blender do not have identical shader graphs, node contracts, renderer semantics, or standard-library implementations. This importer treats that mismatch directly:
+
+- It maps MaterialX surface models and nodes to the Blender material graph that best preserves visual behavior.
+- It uses Blender-native shader nodes when they are a good match.
+- It emits warnings when it falls back to approximate behavior.
+- It does not try to preserve the original MaterialX file as a round-trippable Blender node tree.
+
+The best results come from Blender builds that include native MaterialX shader nodes. In particular, procedural MaterialX noise, fractal, cell noise, Worley noise, and unified noise nodes can be reproduced much more accurately when Blender exposes matching `ShaderNodeMx*` nodes. Without those nodes, the importer remains useful, but some nodes are approximated with Blender's built-in procedural textures.
+
+## Supported Features
+
+Supported surface models:
+
+- `standard_surface`
+- `gltf_pbr`
+- `open_pbr_surface`
+
+Supported MaterialX node categories:
+
+- Math: `absval`, `acos`, `add`, `asin`, `atan2`, `ceil`, `clamp`, `cos`, `divide`, `div`, `exp`, `floor`, `fract`, `invert`, `length`, `ln`, `magnitude`, `max`, `min`, `modulo`, `mul`, `multiply`, `power`, `range`, `remap`, `rotate2d`, `rotate3d`, `round`, `safepower`, `sign`, `sin`, `smoothstep`, `sqrt`, `subtract`, `tan`.
+- Vector math: `crossproduct`, `distance`, `dotproduct`, `normalize`.
+- Structure and channels: `combine2`, `combine3`, `combine4`, `dot`, `extract`, `separate2`, `separate3`, `separate4`.
+- Texture and placement: `bump`, `checkerboard`, `circle`, `gltf_colorimage`, `gltf_image`, `gltf_normalmap`, `heighttonormal`, `image`, `normalmap`, `place2d`, `tiledimage`.
+- Geometry: `frame`, `normal`, `position`, `tangent`, `texcoord`, `time`.
+- Procedural noise: `cellnoise2d`, `cellnoise3d`, `fractal2d`, `fractal3d`, `noise2d`, `noise3d`, `unifiednoise2d`, `unifiednoise3d`, `worley2d`, `worley3d`, `worleynoise2d`, `worleynoise3d`.
+- Logic and conditionals: `and`, `ifequal`, `ifgreater`, `ifgreatereq`, `not`, `or`, `xor`.
+- Color: `blackbody`, `colorcorrect`, `contrast`, `hsvtorgb`, `luminance`, `rgbtohsv`, `saturate`, `unpremult`.
+- Matrix and space transforms: `creatematrix`, `determinant`, `invertmatrix`, `transformmatrix`, `transformnormal`, `transformpoint`, `transformvector`, `transpose`.
+- Ramps: `ramp`, `ramp_gradient`, `ramp4`, `ramplr`, `ramptb`, `splitlr`, `splittb`.
+- Compositing and mix: `burn`, `difference`, `dodge`, `minus`, `mix`, `overlay`.
+
+Coverage is best understood through rendered validation rather than this static list alone. The MaterialX Fidelity Suite remains the source of truth for which features reproduce closely in Cycles and Eevee.
+
+## Validation
+
+Rendering fidelity is validated outside this repository by the [`MaterialX Fidelity Suite`](https://github.com/bhouston/material-fidelity).
+
+That suite renders MaterialX samples through multiple renderers and compares output images against MaterialX references. This importer is exercised there through Blender renderers for:
+
+- Cycles, using the importer and custom MaterialX nodes where available.
+- Eevee, using the same importer and custom MaterialX nodes where available.
+- Stock or less-specialized Blender configurations, where fallback behavior is expected for some nodes.
+
+Keeping validation in `material-fidelity` keeps this repository focused on the importer while allowing reproducibility tests, renderer setup, sample assets, image metrics, and visual reports to evolve independently.
 
 ## Installing For Development
 
