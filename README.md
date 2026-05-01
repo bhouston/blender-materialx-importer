@@ -4,9 +4,15 @@ Blender MaterialX Importer loads MaterialX documents into Blender materials.
 
 It is designed as a practical MaterialX-to-Blender compiler: the goal is a faithful Blender material that renders like the source, not a 1:1 reconstruction of every XML element or nodegraph detail from the original `.mtlx` file.
 
+The development and validation of this importer is described in the blog post [Pixel-Perfect MaterialX in Blender and Three.js](https://ben3d.ca/blog/pixel-perfect-materialx-in-blender-and-threejs).
+
 This importer is validated with the [`MaterialX Fidelity Suite`](https://github.com/bhouston/material-fidelity), which renders MaterialX samples through Blender Cycles and Eevee and compares the results against reference MaterialX renders.
 
+![MaterialX 2D noise — reference vs Blender before and after custom nodes](docs/images/materialx-noise2d.webp)
+
 For best results, use a Blender build that includes the custom MaterialX shader nodes from [Blender PR #158054](https://projects.blender.org/blender/blender/pulls/158054). Stock Blender builds remain supported, but some procedural nodes fall back to approximate Blender-native equivalents.
+
+![MaterialX Worley noise — reference vs Blender with custom nodes](docs/images/materialx-worleynoise.webp)
 
 ## Quick Start
 
