@@ -196,8 +196,7 @@ def scale_socket(
     amplitude: float,
     pivot: float,
 ) -> bpy.types.NodeSocket:
-    centered = math_socket(context, "SUBTRACT", source, constant_socket(context, pivot, "float").socket)
-    scaled = math_socket(context, "MULTIPLY", centered, constant_socket(context, amplitude, "float").socket)
+    scaled = math_socket(context, "MULTIPLY", source, constant_socket(context, amplitude, "float").socket)
     return math_socket(context, "ADD", scaled, constant_socket(context, pivot, "float").socket)
 
 

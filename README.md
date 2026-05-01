@@ -42,7 +42,7 @@ MaterialX and Blender do not have identical shader graphs, node contracts, rende
 - It emits warnings when it falls back to approximate behavior.
 - It does not try to preserve the original MaterialX file as a round-trippable Blender node tree.
 
-The best results come from Blender builds that include the custom MaterialX shader nodes from [Blender PR #158054](https://projects.blender.org/blender/blender/pulls/158054). In particular, procedural MaterialX noise, fractal, cell noise, Worley noise, and unified noise nodes can be reproduced much more accurately when Blender exposes matching `ShaderNodeMx*` nodes. Without those nodes, the importer remains useful, but some nodes are approximated with Blender's built-in procedural textures.
+The best results come from Blender builds that include the custom MaterialX shader nodes from [Blender PR #158054](https://projects.blender.org/blender/blender/pulls/158054). Scalar MaterialX `noise*` and `fractal*` nodes are mapped to Blender's built-in Noise Texture where that is exact. MaterialX color/vector noise, cell noise, Worley noise, and unified noise still need matching `ShaderNodeMx*` nodes for parity. Without those nodes, the importer remains useful, but some nodes are approximated with Blender's built-in procedural textures.
 
 ## Supported Features
 
@@ -118,7 +118,7 @@ Renderer setup, camera framing, shader-ball assets, image generation, and metric
 
 ## Custom MaterialX Nodes
 
-Some MaterialX nodes have no exact equivalent in stock Blender. The importer detects matching Blender node types from [Blender PR #158054](https://projects.blender.org/blender/blender/pulls/158054) at runtime and uses them when available.
+Some MaterialX nodes have no exact equivalent in stock Blender. The importer detects matching Blender node types from [Blender PR #158054](https://projects.blender.org/blender/blender/pulls/158054) at runtime and uses them when available. Scalar `noise2d`, `noise3d`, `fractal2d`, and `fractal3d` use Blender's native Noise Texture when the octave range can be represented exactly.
 
 Examples include:
 

@@ -24,6 +24,10 @@ from ..values import COMPONENT_TYPES, component_count, static_bool_input, static
 _MX_NODE_SUPPORT_CACHE: dict[str, bool] = {}
 
 
+def noise_detail_from_mx_octaves(octaves: int) -> float:
+    return float(max(octaves - 1, 0))
+
+
 def register(registry) -> None:
     registry.register_many({"noise2d", "noise3d", "fractal2d", "fractal3d"}, compile_noise)
     registry.register_many({"cellnoise2d", "cellnoise3d"}, compile_cellnoise)
@@ -35,36 +39,73 @@ def compile_noise(context: CompileContext, node: Any, output_name: str, scope: A
     node_category = node.getCategory()
     is_2d = node_category.endswith("2d")
     is_fractal = node_category.startswith("fractal")
+    output_type = type_name(node) or "float"
+
+    native_is_exact = (
+        not is_fractal or noise_detail_from_mx_octaves(static_int_input(node, "octaves", 3)) <= 15.0
+    )
+    if output_type not in COMPONENT_TYPES and native_is_exact:
+        return compile_native_noise_like(context, node, scope, is_2d, is_fractal)
+
     mx_node_type = f"ShaderNodeMx{'Fractal' if is_fractal else 'Noise'}{'2D' if is_2d else '3D'}"
     mx_output = compile_mx_noise_like(context, node, scope, mx_node_type, is_2d, is_fractal)
     if mx_output is not None:
         return mx_output
     warn_mx_fallback(context, node_category)
+    return compile_native_noise_like(context, node, scope, is_2d, is_fractal)
+
+
+def compile_native_noise_like(
+    context: CompileContext,
+    node: Any,
+    scope: Any | None,
+    is_2d: bool,
+    is_fractal: bool,
+) -> CompiledSocket | None:
+    output_type = type_name(node) or "float"
+    if is_fractal and static_int_input(node, "octaves", 3) == 0:
+        return apply_mx_noise_scaling(
+            context,
+            node,
+            constant_socket(context, 0.0, "float"),
+            output_type,
+            scope,
+            is_fractal,
+        )
 
     texture = context.material.node_tree.nodes.new(type="ShaderNodeTexNoise")
     texture.label = f"MaterialX {node.getName()}"
     texture.noise_dimensions = "2D" if is_2d else "3D"
     if hasattr(texture, "normalize"):
         texture.normalize = False
+    if "Scale" in texture.inputs:
+        texture.inputs["Scale"].default_value = 1.0
+    if "Distortion" in texture.inputs:
+        texture.inputs["Distortion"].default_value = 0.0
 
     coordinate = coordinate_socket(context, node, "texcoord" if is_2d else "position", is_2d, scope)
     context.material.node_tree.links.new(coordinate.socket, texture.inputs["Vector"])
 
     if is_fractal:
-        connect_or_set_input(context, node, "octaves", texture.inputs["Detail"], 3.0, scope)
+        octaves = input_socket(context, node, "octaves", 3.0, scope)
+        detail = math_socket(
+            context, "SUBTRACT", octaves.socket, constant_socket(context, 1.0, "float").socket
+        )
+        context.material.node_tree.links.new(detail, texture.inputs["Detail"])
         connect_or_set_input(context, node, "diminish", texture.inputs["Roughness"], 0.5, scope)
         if "Lacunarity" in texture.inputs:
             connect_or_set_input(context, node, "lacunarity", texture.inputs["Lacunarity"], 2.0, scope)
     else:
-        texture.inputs["Detail"].default_value = 16.0
+        texture.inputs["Detail"].default_value = 0.0
         texture.inputs["Roughness"].default_value = 0.5
 
-    output_type = type_name(node) or "float"
     source_type = output_type if output_type in COMPONENT_TYPES else "float"
     source = texture_output(texture, "Color" if output_type in COMPONENT_TYPES else "Factor", "Fac")
     if source is None:
         return None
-    return scale_noise_output(context, node, CompiledSocket(source, source_type), output_type, scope)
+    return apply_mx_noise_scaling(
+        context, node, CompiledSocket(source, source_type), output_type, scope, is_fractal
+    )
 
 
 def compile_cellnoise(context: CompileContext, node: Any, output_name: str, scope: Any | None) -> CompiledSocket | None:
@@ -260,28 +301,6 @@ def warn_mx_fallback(context: CompileContext, category_name: str) -> None:
     )
 
 
-def scale_noise_output(
-    context: CompileContext,
-    node: Any,
-    source: CompiledSocket,
-    output_type: str,
-    scope: Any | None,
-) -> CompiledSocket:
-    amplitude = input_socket(context, node, "amplitude", 1.0, scope)
-    pivot = input_socket(context, node, "pivot", 0.0, scope)
-    components: list[bpy.types.NodeSocket] = []
-    for index in range(component_count(output_type)):
-        source_component = component_socket(context, source, index)
-        pivot_component = component_socket(context, pivot, index)
-        amplitude_component = component_socket(context, amplitude, index)
-        centered = math_socket(context, "SUBTRACT", source_component, pivot_component)
-        scaled = math_socket(context, "MULTIPLY", centered, amplitude_component)
-        components.append(math_socket(context, "ADD", scaled, pivot_component))
-    from ..blender_nodes import combine_components
-
-    return combine_components(context, components, output_type)
-
-
 def noise_texture_output(
     context: CompileContext,
     node: Any,
@@ -292,19 +311,30 @@ def noise_texture_output(
     amplitude: float,
     pivot: float,
 ) -> bpy.types.NodeSocket | None:
+    if fractal and static_int_input(node, "octaves", 3) == 0:
+        return scale_socket(context, constant_socket(context, 0.0, "float").socket, amplitude, pivot)
+
     texture = context.material.node_tree.nodes.new(type="ShaderNodeTexNoise")
     texture.label = f"MaterialX {node.getName()} Noise"
     texture.noise_dimensions = "2D" if is_2d else "3D"
     if hasattr(texture, "normalize"):
         texture.normalize = False
+    if "Scale" in texture.inputs:
+        texture.inputs["Scale"].default_value = 1.0
+    if "Distortion" in texture.inputs:
+        texture.inputs["Distortion"].default_value = 0.0
     context.material.node_tree.links.new(vector, texture.inputs["Vector"])
     if fractal:
-        connect_or_set_input(context, node, "octaves", texture.inputs["Detail"], 3.0, scope)
+        octaves = input_socket(context, node, "octaves", 3.0, scope)
+        detail = math_socket(
+            context, "SUBTRACT", octaves.socket, constant_socket(context, 1.0, "float").socket
+        )
+        context.material.node_tree.links.new(detail, texture.inputs["Detail"])
         connect_or_set_input(context, node, "diminish", texture.inputs["Roughness"], 0.5, scope)
         if "Lacunarity" in texture.inputs:
             connect_or_set_input(context, node, "lacunarity", texture.inputs["Lacunarity"], 2.0, scope)
     else:
-        texture.inputs["Detail"].default_value = 16.0
+        texture.inputs["Detail"].default_value = 0.0
         texture.inputs["Roughness"].default_value = 0.5
     source = texture_output(texture, "Factor", "Fac")
     if source is None:
