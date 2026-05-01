@@ -1,0 +1,143 @@
+# Blender MaterialX Importer
+
+Blender MaterialX Importer loads MaterialX documents into Blender materials.
+
+It is designed as a practical MaterialX-to-Blender compiler: the goal is a faithful Blender material that renders like the source, not a 1:1 reconstruction of every XML element or nodegraph detail from the original `.mtlx` file.
+
+## Philosophy
+
+MaterialX and Blender do not have identical shader graphs, node contracts, renderer semantics, or standard-library implementations. This importer treats that mismatch directly:
+
+- It maps MaterialX surface models and nodes to the Blender material graph that best preserves visual behavior.
+- It uses Blender-native shader nodes when they are a good match.
+- It emits warnings when it falls back to approximate behavior.
+- It does not try to preserve the original MaterialX file as a round-trippable Blender node tree.
+
+The best results come from Blender builds that include native MaterialX shader nodes. In particular, procedural MaterialX noise, fractal, cell noise, Worley noise, and unified noise nodes can be reproduced much more accurately when Blender exposes matching `ShaderNodeMx*` nodes. Without those nodes, the importer remains useful, but some nodes are approximated with Blender's built-in procedural textures.
+
+## Status
+
+This project is early and intentionally focused. It currently targets material import for rendering and look-development workflows, not full MaterialX document editing.
+
+Current surface coverage includes:
+
+- `standard_surface`
+- `gltf_pbr`
+- `open_pbr_surface`
+
+Node support is broad enough for many sample materials, but coverage should be treated as empirical. The highest-confidence signal is the external fidelity suite described below.
+
+## Validation
+
+Rendering fidelity is validated outside this repository by the [`material-fidelity`](https://github.com/bhouston/material-fidelity) test suite.
+
+That suite renders MaterialX samples through multiple renderers and compares output images against MaterialX references. This importer is exercised there through Blender renderers for:
+
+- Cycles, using the importer and custom MaterialX nodes where available.
+- Eevee, using the same importer and custom MaterialX nodes where available.
+- Stock or less-specialized Blender configurations, where fallback behavior is expected for some nodes.
+
+Keeping validation in `material-fidelity` keeps this repository focused on the importer while allowing reproducibility tests, renderer setup, sample assets, image metrics, and visual reports to evolve independently.
+
+## Requirements
+
+- Blender with Python support.
+- Blender's bundled `MaterialX` Python module.
+- Optional but recommended: a Blender build with native/custom MaterialX shader nodes for best procedural fidelity.
+
+This package is meant to run inside Blender's Python interpreter. The `bpy` module is provided by Blender and is not installed from PyPI.
+
+## Quick Start
+
+Run a script with Blender:
+
+```bash
+blender --background --python examples/import_material.py -- /path/to/material.mtlx /tmp/imported.blend
+```
+
+Or use the importer from your own Blender Python script:
+
+```python
+from materialx_importer import load_materialx_as_blender_material
+
+result = load_materialx_as_blender_material("/path/to/material.mtlx")
+material = result.material
+
+for warning in result.warnings:
+    print("MaterialX importer warning:", warning)
+```
+
+The return value is a `MaterialImportResult`:
+
+- `material`: the created `bpy.types.Material`.
+- `warnings`: non-fatal import warnings, including fallback and unsupported-feature notices.
+
+## Installing For Development
+
+From this repository:
+
+```bash
+python -m pip install -e ".[dev]"
+```
+
+When running inside Blender, make sure this repository root is on `sys.path`, or install it into the Python environment used by your Blender build.
+
+For one-off scripts, adding the checkout path is enough:
+
+```python
+import sys
+sys.path.insert(0, "/path/to/blender-materialx-importer")
+```
+
+## Public API
+
+The intentionally small API is:
+
+```python
+from materialx_importer import MaterialImportResult, load_materialx_as_blender_material
+```
+
+`load_materialx_as_blender_material(mtlx_path: str) -> MaterialImportResult` reads a MaterialX document, compiles a supported surface shader to a new Blender material, and returns any warnings collected during import.
+
+Future options should stay narrow and renderer-independent, for example:
+
+- Overriding the generated material name.
+- Compiling into an existing Blender material.
+- Strict mode for treating fallbacks as errors.
+- Structured warning callbacks.
+
+Renderer setup, camera framing, shader-ball assets, image generation, and metrics are intentionally not part of this package.
+
+## Custom MaterialX Nodes
+
+Some MaterialX nodes have no exact equivalent in stock Blender. The importer detects matching Blender node types at runtime and uses them when available.
+
+Examples include:
+
+- `ShaderNodeMxNoise2D`
+- `ShaderNodeMxNoise3D`
+- `ShaderNodeMxFractal2D`
+- `ShaderNodeMxFractal3D`
+- `ShaderNodeMxCellNoise2D`
+- `ShaderNodeMxCellNoise3D`
+- `ShaderNodeMxWorleyNoise2D`
+- `ShaderNodeMxWorleyNoise3D`
+- `ShaderNodeMxUnifiedNoise2D`
+- `ShaderNodeMxUnifiedNoise3D`
+
+If those nodes are unavailable, the importer falls back to Blender-native procedural nodes where possible and records warnings in `MaterialImportResult.warnings`.
+
+## Contributing
+
+Good contributions usually include:
+
+- A focused importer change.
+- A small MaterialX sample that demonstrates the behavior.
+- A note about whether the behavior is exact, approximate, or dependent on custom Blender nodes.
+- A fidelity check in `material-fidelity` when the change affects rendered output.
+
+When adding node support, prefer preserving visual behavior over preserving source graph shape. If a feature cannot be represented exactly in Blender, emit a clear warning instead of silently pretending it is exact.
+
+## License
+
+MIT. See [`LICENSE`](LICENSE).

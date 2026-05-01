@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "blender-materialx-importer"
+version = "0.1.0"
+description = "Import MaterialX documents as Blender materials."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Ben Houston" }]
+keywords = ["blender", "materialx", "rendering", "shader", "materials"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Topic :: Multimedia :: Graphics :: 3D Rendering",
+]
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.urls]
+Homepage = "https://github.com/bhouston/blender-materialx-importer"
+Issues = "https://github.com/bhouston/blender-materialx-importer/issues"
+
+[tool.setuptools.packages.find]
+include = ["materialx_importer*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
