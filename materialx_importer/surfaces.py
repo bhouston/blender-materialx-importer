@@ -100,6 +100,7 @@ def apply_gltf_pbr_surface_inputs(context: CompileContext, surface_node: Any, pr
         "transmission": ("Transmission Weight", "Transmission"),
         "ior": ("IOR",),
         "specular": ("Specular IOR Level",),
+        "emissive_strength": ("Emission Strength",),
     }.items():
         connect_or_set_surface_input(context, surface_node, principled, input_name, socket_names, "scalar")
 

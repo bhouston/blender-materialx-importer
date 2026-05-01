@@ -56,6 +56,8 @@ VECTOR_MATH_OPERATIONS = {
     "dotproduct": ("DOT_PRODUCT", "Value", "float"),
     "crossproduct": ("CROSS_PRODUCT", "Vector", "vector3"),
     "distance": ("DISTANCE", "Value", "float"),
+    "reflect": ("REFLECT", "Vector", "vector3"),
+    "refract": ("REFRACT", "Vector", "vector3"),
 }
 BINARY_INPUTS = {
     "add": ("in1", "in2", 0.0, 0.0),
@@ -258,6 +260,14 @@ def compile_vector_math(context: CompileContext, node: Any, output_name: str, sc
     if node_category == "normalize":
         source = input_socket(context, node, "in", (0.0, 0.0, 0.0), scope)
         context.material.node_tree.links.new(source.socket, vector_node.inputs[0])
+    elif node_category in {"reflect", "refract"}:
+        source = input_socket(context, node, "in", (1.0, 0.0, 0.0), scope)
+        normal = input_socket(context, node, "normal", (0.0, 1.0, 0.0), scope)
+        context.material.node_tree.links.new(source.socket, vector_node.inputs[0])
+        context.material.node_tree.links.new(normal.socket, vector_node.inputs[1])
+        if node_category == "refract":
+            ior = input_socket(context, node, "ior", 1.0, scope)
+            context.material.node_tree.links.new(ior.socket, vector_node.inputs[2])
     else:
         input1 = input_socket(context, node, "in1", (0.0, 0.0, 0.0), scope)
         input2 = input_socket(context, node, "in2", (0.0, 0.0, 0.0), scope)

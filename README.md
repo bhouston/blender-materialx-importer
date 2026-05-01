@@ -55,7 +55,7 @@ Supported surface models:
 Supported MaterialX node categories:
 
 - Math: `absval`, `acos`, `add`, `asin`, `atan2`, `ceil`, `clamp`, `cos`, `divide`, `div`, `exp`, `floor`, `fract`, `invert`, `length`, `ln`, `magnitude`, `max`, `min`, `modulo`, `mul`, `multiply`, `power`, `range`, `remap`, `rotate2d`, `rotate3d`, `round`, `safepower`, `sign`, `sin`, `smoothstep`, `sqrt`, `subtract`, `tan`.
-- Vector math: `crossproduct`, `distance`, `dotproduct`, `normalize`.
+- Vector math: `crossproduct`, `distance`, `dotproduct`, `normalize`, `reflect`, `refract`.
 - Structure and channels: `combine2`, `combine3`, `combine4`, `dot`, `extract`, `separate2`, `separate3`, `separate4`.
 - Texture and placement: `bump`, `checkerboard`, `circle`, `gltf_colorimage`, `gltf_image`, `gltf_normalmap`, `heighttonormal`, `image`, `normalmap`, `place2d`, `tiledimage`.
 - Geometry: `frame`, `normal`, `position`, `tangent`, `texcoord`, `time`.
