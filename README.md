@@ -6,6 +6,8 @@ It is designed as a practical MaterialX-to-Blender compiler: the goal is a faith
 
 This importer is validated with the [`MaterialX Fidelity Suite`](https://github.com/bhouston/material-fidelity), which renders MaterialX samples through Blender Cycles and Eevee and compares the results against reference MaterialX renders.
 
+For best results, use a Blender build that includes the custom MaterialX shader nodes from [Blender PR #158054](https://projects.blender.org/blender/blender/pulls/158054). Stock Blender builds remain supported, but some procedural nodes fall back to approximate Blender-native equivalents.
+
 ## Quick Start
 
 Run a script with Blender:
@@ -40,7 +42,7 @@ MaterialX and Blender do not have identical shader graphs, node contracts, rende
 - It emits warnings when it falls back to approximate behavior.
 - It does not try to preserve the original MaterialX file as a round-trippable Blender node tree.
 
-The best results come from Blender builds that include native MaterialX shader nodes. In particular, procedural MaterialX noise, fractal, cell noise, Worley noise, and unified noise nodes can be reproduced much more accurately when Blender exposes matching `ShaderNodeMx*` nodes. Without those nodes, the importer remains useful, but some nodes are approximated with Blender's built-in procedural textures.
+The best results come from Blender builds that include the custom MaterialX shader nodes from [Blender PR #158054](https://projects.blender.org/blender/blender/pulls/158054). In particular, procedural MaterialX noise, fractal, cell noise, Worley noise, and unified noise nodes can be reproduced much more accurately when Blender exposes matching `ShaderNodeMx*` nodes. Without those nodes, the importer remains useful, but some nodes are approximated with Blender's built-in procedural textures.
 
 ## Supported Features
 
@@ -116,7 +118,7 @@ Renderer setup, camera framing, shader-ball assets, image generation, and metric
 
 ## Custom MaterialX Nodes
 
-Some MaterialX nodes have no exact equivalent in stock Blender. The importer detects matching Blender node types at runtime and uses them when available.
+Some MaterialX nodes have no exact equivalent in stock Blender. The importer detects matching Blender node types from [Blender PR #158054](https://projects.blender.org/blender/blender/pulls/158054) at runtime and uses them when available.
 
 Examples include:
 
