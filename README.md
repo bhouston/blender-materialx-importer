@@ -124,7 +124,7 @@ Renderer setup, camera framing, shader-ball assets, image generation, and metric
 
 ## Custom MaterialX Nodes
 
-Some MaterialX nodes have no exact equivalent in stock Blender. The importer detects matching Blender node types from [Blender PR #158054](https://projects.blender.org/blender/blender/pulls/158054) at runtime and uses them when available.
+Some MaterialX nodes have no exact equivalent in stock Blender. The importer detects matching Blender node types from [Blender PR #158054](https://projects.blender.org/blender/blender/pulls/158054) at runtime and uses them when available. 
 
 Examples include:
 

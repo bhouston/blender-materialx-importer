@@ -114,7 +114,7 @@ def connect_or_set_input(
     input_element = get_input(node, input_name)
     if input_element is not None and context.compiler is not None:
         compiled = context.compiler.compile_input(input_element, scope)
-        if compiled is not None:
+        if isinstance(compiled, CompiledSocket):
             context.material.node_tree.links.new(compiled.socket, socket)
             return
     set_socket_default(socket, input_value_or_default(node, input_name) or default)
@@ -204,18 +204,18 @@ def scale_socket(
 def constant_socket(context: CompileContext, value: Any, type_name_value: str | None) -> CompiledSocket:
     nodes = context.material.node_tree.nodes
     if type_name_value in COMPONENT_TYPES:
-        pieces = parse_vector(value)
-        combine = nodes.new(type="ShaderNodeCombineXYZ")
-        combine.inputs["X"].default_value = pieces[0] if len(pieces) > 0 else 0.0
-        combine.inputs["Y"].default_value = pieces[1] if len(pieces) > 1 else combine.inputs["X"].default_value
-        combine.inputs["Z"].default_value = pieces[2] if len(pieces) > 2 else combine.inputs["Y"].default_value
-        return CompiledSocket(combine.outputs["Vector"], type_name_value or "vector3")
+        component_total = component_count(type_name_value)
+        pieces = parse_color(value) if component_total == 4 else parse_vector(value)
+        components = [constant_socket(context, pieces[min(index, len(pieces) - 1)], "float").socket for index in range(component_total)]
+        return combine_components(context, components, type_name_value or "vector3")
     node = nodes.new(type="ShaderNodeValue")
     node.outputs[0].default_value = parse_bool_float(value) if type_name_value == "boolean" else parse_float(value)
     return CompiledSocket(node.outputs[0], type_name_value or "float")
 
 
 def component_socket(context: CompileContext, value: CompiledSocket, index: int) -> bpy.types.NodeSocket:
+    if value.components is not None and index < len(value.components):
+        return value.components[index]
     if value.type_name not in COMPONENT_TYPES:
         return value.socket
     if index > 2:
@@ -237,7 +237,7 @@ def combine_components(
     for index, socket_name in enumerate(("X", "Y", "Z")):
         source = components[min(index, len(components) - 1)]
         context.material.node_tree.links.new(source, combine.inputs[socket_name])
-    return CompiledSocket(combine.outputs["Vector"], output_type)
+    return CompiledSocket(combine.outputs["Vector"], output_type, components=components)
 
 
 def math_socket(

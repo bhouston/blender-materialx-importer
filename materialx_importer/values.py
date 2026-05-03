@@ -91,7 +91,9 @@ def matrix_size(type_name: str | None) -> int | None:
 
 
 def component_count(type_name: str) -> int:
-    if type_name in {"color3", "vector3", "color4", "vector4"}:
+    if type_name in {"color4", "vector4"}:
+        return 4
+    if type_name in {"color3", "vector3"}:
         return 3
     if type_name == "vector2":
         return 2

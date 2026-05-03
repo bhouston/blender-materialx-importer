@@ -46,16 +46,16 @@ def compile_creatematrix(context: CompileContext, node: Any, output_name: str, s
     output_type = type_name(node) or "matrix33"
     size = matrix_size(output_type) or 3
     node_def = attribute(node, "nodedef") or ""
-    use_vector4_rows = node_def == "ND_creatematrix_vector4_matrix44"
+    use_vector4_inputs = node_def == "ND_creatematrix_vector4_matrix44"
     identity = identity_matrix_values(size)
     rows: list[list[bpy.types.NodeSocket]] = []
 
     for row_index in range(size):
-        default_components = tuple(identity[row_index][: 4 if use_vector4_rows else 3])
+        default_components = tuple(identity[row_index][: 4 if use_vector4_inputs else 3])
         source = input_socket(context, node, f"in{row_index + 1}", default_components, scope)
         row = [component_socket(context, source, column) for column in range(min(size, 3))]
         if size == 4:
-            if use_vector4_rows:
+            if use_vector4_inputs:
                 row.append(component_socket(context, source, 3))
             else:
                 row.append(constant_socket(context, 1.0 if row_index == 3 else 0.0, "float").socket)
@@ -88,11 +88,11 @@ def compile_invertmatrix(context: CompileContext, node: Any, output_name: str, s
             return constant_matrix(context, identity_matrix_values(source.size), source.size)
         return constant_matrix(context, inverted, source.size)
 
-    if source.size == 3:
-        return CompiledMatrix(size=3, rows=_invert_matrix33_rows(context, source.rows), type_name="matrix33")
-
-    context.warnings.append("Dynamic matrix44 inversion is not supported by the Blender importer; using identity fallback.")
-    return constant_matrix(context, identity_matrix_values(source.size), source.size)
+    return CompiledMatrix(
+        size=source.size,
+        rows=_invert_matrix_rows(context, source.rows),
+        type_name=source.type_name,
+    )
 
 
 def compile_transformmatrix(context: CompileContext, node: Any, output_name: str, scope: Any | None) -> CompiledSocket | None:
@@ -245,19 +245,26 @@ def _determinant_socket(context: CompileContext, rows: list[list[bpy.types.NodeS
     return _sum_sockets(context, terms)
 
 
-def _invert_matrix33_rows(context: CompileContext, rows: list[list[bpy.types.NodeSocket]]) -> list[list[bpy.types.NodeSocket]]:
-    m = rows
+def _invert_matrix_rows(context: CompileContext, rows: list[list[bpy.types.NodeSocket]]) -> list[list[bpy.types.NodeSocket]]:
     determinant = _determinant_socket(context, rows)
-
-    def submul(a: bpy.types.NodeSocket, b: bpy.types.NodeSocket, c: bpy.types.NodeSocket, d: bpy.types.NodeSocket) -> bpy.types.NodeSocket:
-        return math_socket(context, "SUBTRACT", math_socket(context, "MULTIPLY", a, b), math_socket(context, "MULTIPLY", c, d))
-
-    numerators = [
-        [submul(m[1][1], m[2][2], m[1][2], m[2][1]), submul(m[0][2], m[2][1], m[0][1], m[2][2]), submul(m[0][1], m[1][2], m[0][2], m[1][1])],
-        [submul(m[1][2], m[2][0], m[1][0], m[2][2]), submul(m[0][0], m[2][2], m[0][2], m[2][0]), submul(m[0][2], m[1][0], m[0][0], m[1][2])],
-        [submul(m[1][0], m[2][1], m[1][1], m[2][0]), submul(m[0][1], m[2][0], m[0][0], m[2][1]), submul(m[0][0], m[1][1], m[0][1], m[1][0])],
+    size = len(rows)
+    return [
+        [math_socket(context, "DIVIDE", _cofactor_socket(context, rows, column, row), determinant) for column in range(size)]
+        for row in range(size)
     ]
-    return [[math_socket(context, "DIVIDE", numerator, determinant) for numerator in row] for row in numerators]
+
+
+def _cofactor_socket(
+    context: CompileContext,
+    rows: list[list[bpy.types.NodeSocket]],
+    row: int,
+    column: int,
+) -> bpy.types.NodeSocket:
+    minor = [[rows[r][c] for c in range(len(rows)) if c != column] for r in range(len(rows)) if r != row]
+    determinant = _determinant_socket(context, minor)
+    if (row + column) % 2 == 0:
+        return determinant
+    return math_socket(context, "SUBTRACT", constant_socket(context, 0.0, "float").socket, determinant)
 
 
 def _transpose_values(values: list[list[float]] | None) -> list[list[float]] | None:

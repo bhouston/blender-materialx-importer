@@ -18,6 +18,7 @@ class CompiledSocket:
     socket: bpy.types.NodeSocket
     type_name: str
     semantic: str | None = None
+    components: list[bpy.types.NodeSocket] | None = None
 
 
 @dataclass
