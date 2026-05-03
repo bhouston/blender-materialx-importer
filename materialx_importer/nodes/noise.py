@@ -104,9 +104,11 @@ def compile_worley(context: CompileContext, node: Any, output_name: str, scope: 
         connect_or_set_input(context, node, "style", texture.inputs["Style"], 0.0, scope)
 
         output_type = type_name(node) or "float"
-        source_type = output_type if output_type in COMPONENT_TYPES else "float"
-        source = texture.outputs.get("Color" if output_type in COMPONENT_TYPES else "Value")
-        return CompiledSocket(source, source_type) if source is not None else None
+        if output_type in {"vector2", "vector3"}:
+            source = texture.outputs.get("Vector")
+            return worley_vector_output(context, source, output_type) if source is not None else None
+        source = texture.outputs.get("Value")
+        return CompiledSocket(source, "float") if source is not None else None
     warn_mx_fallback(context, node_category)
 
     texture = create_voronoi_texture(context, node, is_2d)
@@ -123,6 +125,22 @@ def compile_worley(context: CompileContext, node: Any, output_name: str, scope: 
         return CompiledSocket(component_socket(context, CompiledSocket(color, "color3"), 0), "float") if color is not None else None
     source = texture.outputs.get("Distance")
     return CompiledSocket(source, "float") if source is not None else None
+
+
+def worley_vector_output(
+    context: CompileContext,
+    source: bpy.types.NodeSocket,
+    output_type: str,
+) -> CompiledSocket:
+    if output_type == "vector3":
+        return CompiledSocket(source, "vector3")
+
+    vector = CompiledSocket(source, "vector3")
+    combine = context.material.node_tree.nodes.new(type="ShaderNodeCombineXYZ")
+    context.material.node_tree.links.new(component_socket(context, vector, 0), combine.inputs["X"])
+    context.material.node_tree.links.new(component_socket(context, vector, 1), combine.inputs["Y"])
+    context.material.node_tree.links.new(constant_socket(context, 0.0, "float").socket, combine.inputs["Z"])
+    return CompiledSocket(combine.outputs["Vector"], "vector2")
 
 
 def compile_unified_noise(context: CompileContext, node: Any, output_name: str, scope: Any | None) -> CompiledSocket | None:
