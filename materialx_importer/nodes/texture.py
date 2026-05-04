@@ -18,9 +18,13 @@ from ..types import CompileContext, CompiledSocket
 from ..values import parse_float, resolve_asset_path
 from .geometry import blender_world_direction_to_materialx_socket
 
+_MX_NODE_SUPPORT_CACHE: dict[str, bool] = {}
+
 
 def register(registry) -> None:
     registry.register_many({"image", "tiledimage"}, compile_image)
+    registry.register("hextiledimage", compile_hextiledimage)
+    registry.register("hextilednormalmap", compile_hextilednormalmap)
     registry.register_many({"gltf_image", "gltf_colorimage"}, compile_gltf_image)
     registry.register("gltf_normalmap", compile_gltf_normalmap)
     registry.register("place2d", compile_place2d)
@@ -52,6 +56,38 @@ def compile_gltf_image(context: CompileContext, image_node: Any, output_name: st
         return None
 
     return compiled_texture_output(context, texture_node, output_type, output_name)
+
+
+def compile_hextiledimage(context: CompileContext, image_node: Any, output_name: str, scope: Any | None) -> CompiledSocket | None:
+    output_type = type_name(image_node) or "color3"
+    texture_node = create_hextiled_image_node(context, image_node, scope, non_color_default=is_data_image_type(output_type))
+    if texture_node is None:
+        return compile_image(context, image_node, output_name, scope)
+    return compiled_texture_output(context, texture_node, output_type, output_name)
+
+
+def compile_hextilednormalmap(
+    context: CompileContext,
+    image_node: Any,
+    output_name: str,
+    scope: Any | None,
+) -> CompiledSocket | None:
+    texture_node = create_hextiled_image_node(context, image_node, scope, non_color_default=True)
+    if texture_node is None:
+        return compile_gltf_normalmap(context, image_node, output_name, scope)
+
+    color_socket = texture_node.outputs.get("Color")
+    if color_socket is None:
+        return None
+    normal_map = context.material.node_tree.nodes.new(type="ShaderNodeNormalMap")
+    context.material.node_tree.links.new(color_socket, normal_map.inputs["Color"])
+    connect_or_set_input(context, image_node, "strength", normal_map.inputs["Strength"], 1.0, scope)
+    socket = normal_map.outputs.get("Normal")
+    if socket is None:
+        return None
+    compiled = blender_world_direction_to_materialx_socket(context, socket)
+    compiled.semantic = "normal"
+    return compiled
 
 
 def compiled_texture_output(
@@ -132,6 +168,100 @@ def create_image_texture_node(
         context.material.node_tree.links.new(texcoord.socket, vector_input)
 
     return texture_node
+
+
+def create_hextiled_image_node(
+    context: CompileContext,
+    image_node: Any,
+    scope: Any | None,
+    *,
+    non_color_default: bool = False,
+) -> bpy.types.Node | None:
+    texture_node = create_mx_node(context, "ShaderNodeMxHextiledImage")
+    if texture_node is None:
+        if "hextiledimage" not in context.fallback_warnings:
+            context.fallback_warnings.add("hextiledimage")
+            context.warnings.append(
+                "MaterialX hextile image nodes are using plain image fallback; "
+                "use a Blender build with ShaderNodeMxHextiledImage for parity."
+            )
+        return None
+
+    image = load_image(context, image_node)
+    if image is None:
+        return None
+
+    texture_node.image = image
+    texture_node.label = f"MaterialX {image_node.getName()}"
+    configure_image_colorspace(texture_node, image_node, non_color_default)
+    configure_image_sampling(texture_node, image_node)
+
+    texcoord = image_texcoord_socket(context, image_node, scope)
+    vector_input = texture_node.inputs.get("Vector")
+    if vector_input is not None:
+        context.material.node_tree.links.new(texcoord.socket, vector_input)
+
+    connect_or_set_input(context, image_node, "tiling", texture_node.inputs["Tiling"], (1.0, 1.0), scope)
+    connect_or_set_input(context, image_node, "rotation", texture_node.inputs["Rotation"], 1.0, scope)
+    connect_or_set_input(
+        context, image_node, "rotationrange", texture_node.inputs["Rotation Range"], (0.0, 360.0), scope
+    )
+    connect_or_set_input(context, image_node, "scale", texture_node.inputs["Scale"], 1.0, scope)
+    connect_or_set_input(context, image_node, "scalerange", texture_node.inputs["Scale Range"], (0.5, 2.0), scope)
+    connect_or_set_input(context, image_node, "offset", texture_node.inputs["Offset"], 1.0, scope)
+    connect_or_set_input(context, image_node, "offsetrange", texture_node.inputs["Offset Range"], (0.0, 1.0), scope)
+    connect_or_set_input(context, image_node, "falloff", texture_node.inputs["Falloff"], 0.5, scope)
+    connect_or_set_input(context, image_node, "falloffcontrast", texture_node.inputs["Falloff Contrast"], 0.5, scope)
+    connect_or_set_input(
+        context,
+        image_node,
+        "lumacoeffs",
+        texture_node.inputs["Luma Coeffs"],
+        (0.2722287, 0.6740818, 0.0536895),
+        scope,
+    )
+
+    return texture_node
+
+
+def load_image(context: CompileContext, image_node: Any) -> bpy.types.Image | None:
+    file_input = get_input(image_node, "file")
+    file_value = input_value(file_input) if file_input is not None else None
+    if not file_value:
+        context.warnings.append(f"Image node {image_node.getName()} has no file input.")
+        return None
+
+    image_path = resolve_asset_path(context.base_dir, str(file_value))
+    if not image_path.exists():
+        context.warnings.append(f"Image file not found: {image_path}")
+        return None
+
+    try:
+        return bpy.data.images.load(str(image_path), check_existing=True)
+    except RuntimeError as exc:
+        context.warnings.append(f"Failed to load image: {exc}")
+        return None
+
+
+def create_mx_node(context: CompileContext, node_type: str) -> bpy.types.Node | None:
+    if not has_mx_node(context, node_type):
+        return None
+    return context.material.node_tree.nodes.new(type=node_type)
+
+
+def has_mx_node(context: CompileContext, node_type: str) -> bool:
+    cached = _MX_NODE_SUPPORT_CACHE.get(node_type)
+    if cached is not None:
+        return cached
+    nodes = context.material.node_tree.nodes
+    try:
+        probe = nodes.new(type=node_type)
+    except Exception:
+        _MX_NODE_SUPPORT_CACHE[node_type] = False
+        return False
+    nodes.remove(probe)
+    _MX_NODE_SUPPORT_CACHE[node_type] = True
+    return True
 
 
 def configure_image_colorspace(texture_node: bpy.types.Node, image_node: Any, non_color_default: bool) -> None:
