@@ -25,6 +25,7 @@ def register(registry) -> None:
     registry.register("burn", compile_burn)
     registry.register("dodge", compile_dodge)
     registry.register("overlay", compile_overlay)
+    registry.register("screen", compile_screen)
     registry.register_many({"ifgreater", "ifgreatereq", "ifequal"}, compile_conditional)
 
 
@@ -165,6 +166,33 @@ def compile_overlay(context: CompileContext, node: Any, output_name: str, scope:
         use_high_branch = step_component(context, half, bg_component)
         overlayed = mix_component(context, low_branch, high_branch, use_high_branch)
         result_components.append(mix_component(context, bg_component, overlayed, mix_component_socket))
+    return combine_components(context, result_components, output_type)
+
+
+def compile_screen(context: CompileContext, node: Any, output_name: str, scope: Any | None) -> CompiledSocket | None:
+    output_type = type_name(node) or "float"
+    fg = input_socket(context, node, "fg", 0.0, scope)
+    bg = input_socket(context, node, "bg", 0.0, scope)
+    mix_socket = input_socket(context, node, "mix", 1.0, scope)
+    one = constant_socket(context, 1.0, "float").socket
+    result_components: list[bpy.types.NodeSocket] = []
+    for index in range(component_count(output_type)):
+        fg_component = component_socket(context, fg, index)
+        bg_component = component_socket(context, bg, index)
+        screened = math_socket(
+            context,
+            "SUBTRACT",
+            one,
+            math_socket(
+                context,
+                "MULTIPLY",
+                math_socket(context, "SUBTRACT", one, fg_component),
+                math_socket(context, "SUBTRACT", one, bg_component),
+            ),
+        )
+        result_components.append(
+            mix_component(context, bg_component, screened, component_socket(context, mix_socket, index))
+        )
     return combine_components(context, result_components, output_type)
 
 

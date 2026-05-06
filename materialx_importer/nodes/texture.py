@@ -13,9 +13,17 @@ from ..blender_nodes import (
     math_socket,
     rotate2d_components,
 )
-from ..document import attribute, category, get_input, input_value, type_name
+from ..document import (
+    attribute,
+    category,
+    connected_node,
+    get_input,
+    input_value,
+    input_value_or_default,
+    type_name,
+)
 from ..types import CompileContext, CompiledSocket
-from ..values import parse_float, resolve_asset_path
+from ..values import component_count, parse_float, resolve_asset_path
 from .geometry import blender_world_direction_to_materialx_socket
 
 _MX_NODE_SUPPORT_CACHE: dict[str, bool] = {}
@@ -25,7 +33,9 @@ def register(registry) -> None:
     registry.register_many({"image", "tiledimage"}, compile_image)
     registry.register("hextiledimage", compile_hextiledimage)
     registry.register("hextilednormalmap", compile_hextilednormalmap)
-    registry.register_many({"gltf_image", "gltf_colorimage"}, compile_gltf_image)
+    registry.register("gltf_image", compile_gltf_image)
+    registry.register("gltf_colorimage", compile_gltf_colorimage)
+    registry.register("gltf_anisotropy_image", compile_gltf_anisotropy_image)
     registry.register("gltf_normalmap", compile_gltf_normalmap)
     registry.register("place2d", compile_place2d)
     registry.register("normalmap", compile_normalmap)
@@ -45,17 +55,164 @@ def compile_image(context: CompileContext, image_node: Any, output_name: str, sc
 
 
 def compile_gltf_image(context: CompileContext, image_node: Any, output_name: str, scope: Any | None) -> CompiledSocket | None:
-    output_type = "color3" if category(image_node) == "gltf_colorimage" else type_name(image_node) or "color3"
+    output_type = type_name(image_node) or "color3"
+    image = compile_gltf_image_lookup(context, image_node, scope, output_type)
+    if image is None:
+        return None
+
+    if get_input(image_node, "factor") is not None:
+        factor = input_socket(context, image_node, "factor", default_factor_value(output_type), scope)
+        image = multiply_compiled_components(context, image, factor, output_type)
+
+    return select_gltf_image_output(context, image, output_type, output_name)
+
+
+def compile_gltf_colorimage(
+    context: CompileContext,
+    image_node: Any,
+    output_name: str,
+    scope: Any | None,
+) -> CompiledSocket | None:
+    image = compile_gltf_image_lookup(context, image_node, scope, "color4")
+    if image is None:
+        return None
+
+    color = input_socket(context, image_node, "color", (1.0, 1.0, 1.0, 1.0), scope)
+    geomcolor = input_socket(context, image_node, "geomcolor", (1.0, 1.0, 1.0, 1.0), scope)
+    image = multiply_compiled_components(context, image, color, "color4")
+    image = multiply_compiled_components(context, image, geomcolor, "color4")
+
+    if output_name in {"outa", "a", "alpha"}:
+        return CompiledSocket(component_socket(context, image, 3), "float")
+    return combine_components(context, [component_socket(context, image, index) for index in range(3)], "color3")
+
+
+def compile_gltf_anisotropy_image(
+    context: CompileContext,
+    image_node: Any,
+    output_name: str,
+    scope: Any | None,
+) -> CompiledSocket | None:
+    image = compile_gltf_image_lookup(context, image_node, scope, "vector3")
+    if image is None:
+        return None
+
+    x = math_socket(
+        context,
+        "SUBTRACT",
+        math_socket(
+            context,
+            "MULTIPLY",
+            component_socket(context, image, 0),
+            constant_socket(context, 2.0, "float").socket,
+        ),
+        constant_socket(context, 1.0, "float").socket,
+    )
+    y = math_socket(
+        context,
+        "SUBTRACT",
+        math_socket(
+            context,
+            "MULTIPLY",
+            component_socket(context, image, 1),
+            constant_socket(context, 2.0, "float").socket,
+        ),
+        constant_socket(context, 1.0, "float").socket,
+    )
+    strength = math_socket(
+        context,
+        "MULTIPLY",
+        input_socket(context, image_node, "anisotropy_strength", 1.0, scope).socket,
+        component_socket(context, image, 2),
+    )
+    rotation = math_socket(
+        context,
+        "ADD",
+        input_socket(context, image_node, "anisotropy_rotation", 0.0, scope).socket,
+        math_socket(context, "ARCTAN2", y, x),
+    )
+
+    if output_name == "anisotropy_rotation_out":
+        return CompiledSocket(rotation, "float")
+    return CompiledSocket(strength, "float")
+
+
+def compile_gltf_image_lookup(
+    context: CompileContext,
+    image_node: Any,
+    scope: Any | None,
+    output_type: str,
+) -> CompiledSocket | None:
     texture_node = create_image_texture_node(
         context,
         image_node,
         scope,
         non_color_default=is_data_image_type(output_type),
+        texcoord_override=gltf_image_texcoord_socket(context, image_node, scope),
     )
     if texture_node is None:
         return None
+    return texture_output_as_compiled(context, texture_node, output_type)
 
-    return compiled_texture_output(context, texture_node, output_type, output_name)
+
+def texture_output_as_compiled(
+    context: CompileContext,
+    texture_node: bpy.types.Node,
+    output_type: str,
+) -> CompiledSocket | None:
+    color_socket = texture_node.outputs.get("Color")
+    if color_socket is None:
+        return None
+    if output_type in {"color4", "vector4"}:
+        alpha = texture_node.outputs.get("Alpha")
+        components = [component_socket(context, CompiledSocket(color_socket, "color3"), index) for index in range(3)]
+        components.append(alpha if alpha is not None else constant_socket(context, 1.0, "float").socket)
+        return combine_components(context, components, output_type)
+    if output_type == "float":
+        return CompiledSocket(component_socket(context, CompiledSocket(color_socket, "color3"), 0), "float")
+    return CompiledSocket(color_socket, output_type)
+
+
+def default_factor_value(output_type: str) -> float | tuple[float, ...]:
+    if output_type in {"color4", "vector4"}:
+        return (1.0, 1.0, 1.0, 1.0)
+    if output_type in {"color3", "vector3"}:
+        return (1.0, 1.0, 1.0)
+    return 1.0
+
+
+def multiply_compiled_components(
+    context: CompileContext,
+    left: CompiledSocket,
+    right: CompiledSocket,
+    output_type: str,
+) -> CompiledSocket:
+    return combine_components(
+        context,
+        [
+            math_socket(
+                context,
+                "MULTIPLY",
+                component_socket(context, left, index),
+                component_socket(context, right, index),
+            )
+            for index in range(component_count(output_type))
+        ],
+        output_type,
+    )
+
+
+def select_gltf_image_output(
+    context: CompileContext,
+    image: CompiledSocket,
+    output_type: str,
+    output_name: str,
+) -> CompiledSocket:
+    if output_name in {"outa", "a", "alpha"}:
+        return CompiledSocket(component_socket(context, image, 3), "float")
+    if output_type == "float":
+        return CompiledSocket(component_socket(context, image, 0), "float")
+    return image
 
 
 def compile_hextiledimage(context: CompileContext, image_node: Any, output_name: str, scope: Any | None) -> CompiledSocket | None:
@@ -136,6 +293,7 @@ def create_image_texture_node(
     scope: Any | None,
     *,
     non_color_default: bool = False,
+    texcoord_override: CompiledSocket | None = None,
 ) -> bpy.types.Node | None:
     file_input = get_input(image_node, "file")
     file_value = input_value(file_input) if file_input is not None else None
@@ -160,7 +318,7 @@ def create_image_texture_node(
     configure_image_colorspace(texture_node, image_node, non_color_default)
     configure_image_sampling(texture_node, image_node)
 
-    texcoord = image_texcoord_socket(context, image_node, scope)
+    texcoord = texcoord_override or image_texcoord_socket(context, image_node, scope)
     if category(image_node) == "tiledimage":
         texcoord = compile_tiledimage_texcoord(context, image_node, texcoord, scope)
     vector_input = texture_node.inputs.get("Vector")
@@ -354,9 +512,63 @@ def compile_place2d(context: CompileContext, node: Any, output_name: str, scope:
     scale = input_socket(context, node, "scale", (1.0, 1.0), scope)
     rotate = input_socket(context, node, "rotate", 0.0, scope)
     offset = input_socket(context, node, "offset", (0.0, 0.0), scope)
+    return place2d_transform(context, texcoord, pivot, scale, rotate, offset, operation_order(context, node, scope, 0))
 
-    order_input = get_input(node, "operationorder")
-    order_value = parse_float(input_value(order_input) or 0.0)
+
+def gltf_image_texcoord_socket(context: CompileContext, image_node: Any, scope: Any | None) -> CompiledSocket:
+    texcoord = image_texcoord_socket(context, image_node, scope)
+    pivot = input_socket(context, image_node, "pivot", (0.0, 1.0), scope)
+    scale = input_socket(context, image_node, "scale", (1.0, 1.0), scope)
+    rotate = input_socket(context, image_node, "rotate", 0.0, scope)
+    offset = input_socket(context, image_node, "offset", (0.0, 0.0), scope)
+
+    inverse_scale_components = [
+        math_socket(
+            context,
+            "DIVIDE",
+            constant_socket(context, 1.0, "float").socket,
+            component_socket(context, scale, index),
+        )
+        for index in range(2)
+    ]
+    inverse_scale = combine_components(context, inverse_scale_components, "vector2")
+    negative_rotate = CompiledSocket(
+        math_socket(context, "MULTIPLY", rotate.socket, constant_socket(context, -1.0, "float").socket),
+        "float",
+    )
+    negative_offset = combine_components(
+        context,
+        [
+            math_socket(
+                context,
+                "MULTIPLY",
+                component_socket(context, offset, 0),
+                constant_socket(context, -1.0, "float").socket,
+            ),
+            component_socket(context, offset, 1),
+        ],
+        "vector2",
+    )
+    return place2d_transform(
+        context,
+        texcoord,
+        pivot,
+        inverse_scale,
+        negative_rotate,
+        negative_offset,
+        operation_order(context, image_node, scope, 0),
+    )
+
+
+def place2d_transform(
+    context: CompileContext,
+    texcoord: CompiledSocket,
+    pivot: CompiledSocket,
+    scale: CompiledSocket,
+    rotate: CompiledSocket,
+    offset: CompiledSocket,
+    order_value: int,
+) -> CompiledSocket:
     centered = [
         math_socket(
             context,
@@ -367,7 +579,7 @@ def compile_place2d(context: CompileContext, node: Any, output_name: str, scope:
         for index in range(2)
     ]
 
-    if abs(order_value) > 0.5:
+    if order_value:
         shifted = [
             math_socket(context, "SUBTRACT", centered[index], component_socket(context, offset, index))
             for index in range(2)
@@ -393,6 +605,20 @@ def compile_place2d(context: CompileContext, node: Any, output_name: str, scope:
         for index in range(2)
     ]
     return combine_components(context, result, "vector2")
+
+
+def operation_order(context: CompileContext, node: Any, scope: Any | None, default: int) -> int:
+    input_element = get_input(node, "operationorder")
+    value = input_value(input_element)
+    if value is None and input_element is not None:
+        connected = connected_node(context.document, input_element, scope=scope)
+        if connected is not None and category(connected) == "constant":
+            value = input_value(get_input(connected, "value"))
+    if value is None:
+        value = input_value_or_default(node, "operationorder")
+    if value is None:
+        return default
+    return int(parse_float(value))
 
 
 def compile_normalmap(context: CompileContext, node: Any, output_name: str, scope: Any | None) -> CompiledSocket | None:

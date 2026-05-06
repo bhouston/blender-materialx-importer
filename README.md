@@ -63,14 +63,14 @@ Supported MaterialX node categories:
 - Math: `absval`, `acos`, `add`, `asin`, `atan2`, `ceil`, `clamp`, `cos`, `divide`, `div`, `exp`, `floor`, `fract`, `invert`, `length`, `ln`, `magnitude`, `max`, `min`, `modulo`, `mul`, `multiply`, `power`, `range`, `remap`, `rotate2d`, `rotate3d`, `round`, `safepower`, `sign`, `sin`, `smoothstep`, `sqrt`, `subtract`, `tan`.
 - Vector math: `crossproduct`, `distance`, `dotproduct`, `normalize`, `reflect`, `refract`.
 - Structure and channels: `combine2`, `combine3`, `combine4`, `dot`, `extract`, `separate2`, `separate3`, `separate4`.
-- Texture and placement: `bump`, `checkerboard`, `circle`, `gltf_colorimage`, `gltf_image`, `gltf_normalmap`, `heighttonormal`, `image`, `normalmap`, `place2d`, `tiledimage`.
+- Texture and placement: `bump`, `checkerboard`, `circle`, `gltf_anisotropy_image`, `gltf_colorimage`, `gltf_image`, `gltf_normalmap`, `heighttonormal`, `image`, `normalmap`, `place2d`, `tiledimage`.
 - Geometry: `frame`, `normal`, `position`, `tangent`, `texcoord`, `time`.
 - Procedural noise: `cellnoise2d`, `cellnoise3d`, `fractal2d`, `fractal3d`, `noise2d`, `noise3d`, `unifiednoise2d`, `unifiednoise3d`, `worley2d`, `worley3d`, `worleynoise2d`, `worleynoise3d`.
 - Logic and conditionals: `and`, `ifequal`, `ifgreater`, `ifgreatereq`, `not`, `or`, `xor`.
 - Color: `blackbody`, `colorcorrect`, `contrast`, `hsvtorgb`, `luminance`, `rgbtohsv`, `saturate`, `unpremult`.
 - Matrix and space transforms: `creatematrix`, `determinant`, `invertmatrix`, `transformmatrix`, `transformnormal`, `transformpoint`, `transformvector`, `transpose`.
 - Ramps: `ramp`, `ramp_gradient`, `ramp4`, `ramplr`, `ramptb`, `splitlr`, `splittb`.
-- Compositing and mix: `burn`, `difference`, `dodge`, `minus`, `mix`, `overlay`.
+- Compositing and mix: `burn`, `difference`, `dodge`, `minus`, `mix`, `overlay`, `screen`.
 
 Coverage is best understood through rendered validation rather than this static list alone. The MaterialX Fidelity Suite remains the source of truth for which features reproduce closely in Cycles and Eevee.
 
