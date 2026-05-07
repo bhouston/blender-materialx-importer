@@ -4,39 +4,83 @@ from typing import Any
 
 import bpy
 
-from ..blender_nodes import combine_components, component_socket, constant_socket, input_socket, math_socket
+from ..blender_nodes import (
+    combine_components,
+    component_socket,
+    constant_socket,
+    input_socket,
+    math_socket,
+    vector_math_output,
+)
+from ..document import input_value_or_default
 from ..types import CompileContext, CompiledSocket
 
 
 def register(registry) -> None:
-    registry.register_many({"texcoord", "position", "normal", "tangent"}, compile_geometry)
+    registry.register_many({"texcoord", "position", "normal", "tangent", "bitangent", "viewdirection"}, compile_geometry)
     registry.register("frame", compile_frame)
     registry.register("time", compile_time)
 
 
 def compile_geometry(context: CompileContext, node: Any, output_name: str, scope: Any | None) -> CompiledSocket | None:
-    return compile_geometry_category(context, node.getCategory())
+    node_category = node.getCategory()
+    default_space = "world" if node_category == "viewdirection" else "object"
+    return compile_geometry_category(context, node_category, materialx_space(node, default_space))
 
 
-def compile_geometry_category(context: CompileContext, category: str) -> CompiledSocket | None:
+def compile_geometry_category(context: CompileContext, category: str, space: str = "object") -> CompiledSocket | None:
     nodes = context.material.node_tree.nodes
     if category == "texcoord":
         node = nodes.new(type="ShaderNodeTexCoord")
         socket = node.outputs.get("UV")
         return CompiledSocket(socket, "vector2") if socket is not None else None
+    if category == "position":
+        node = nodes.new(type="ShaderNodeTexCoord")
+        socket = node.outputs.get("Object")
+        if socket is None:
+            return None
+        if space == "world":
+            socket = blender_object_to_world_position_socket(context, socket)
+        return blender_position_to_materialx_socket(context, socket)
     if category in {"normal", "tangent"}:
         node = nodes.new(type="ShaderNodeNewGeometry")
         socket = node.outputs.get("Tangent" if category == "tangent" else "Normal")
         if socket is None:
             return None
-        object_socket = blender_world_to_object_direction_socket(context, socket, "NORMAL" if category == "normal" else "VECTOR")
-        return blender_direction_to_materialx_socket(context, object_socket)
-    node = nodes.new(type="ShaderNodeTexCoord")
-    socket = node.outputs.get("Object")
-    return materialx_position_socket(context, socket) if socket is not None else None
+        if space != "world":
+            socket = blender_world_to_object_direction_socket(context, socket, "NORMAL" if category == "normal" else "VECTOR")
+        return blender_direction_to_materialx_socket(context, socket)
+    if category == "bitangent":
+        normal = compile_geometry_category(context, "normal", space)
+        tangent = compile_geometry_category(context, "tangent", space)
+        if normal is None or tangent is None:
+            return None
+        cross = vector_math_output(context, "CROSS_PRODUCT", normal.socket, tangent.socket)
+        normalize = nodes.new(type="ShaderNodeVectorMath")
+        normalize.operation = "NORMALIZE"
+        context.material.node_tree.links.new(cross, normalize.inputs[0])
+        return CompiledSocket(normalize.outputs["Vector"], "vector3", "unit_vector")
+    if category == "viewdirection":
+        node = nodes.new(type="ShaderNodeNewGeometry")
+        socket = node.outputs.get("Incoming")
+        if socket is None:
+            return None
+        if space != "world":
+            socket = blender_world_to_object_direction_socket(context, socket, "NORMAL")
+        return blender_direction_to_materialx_socket(context, socket)
+    return None
 
 
-def materialx_position_socket(context: CompileContext, blender_position: bpy.types.NodeSocket) -> CompiledSocket:
+def materialx_space(node: Any, default: str) -> str:
+    value = (input_value_or_default(node, "space") or default).strip().lower()
+    if value in {"model", "0", "object", "1"}:
+        return "object"
+    if value in {"world", "2"}:
+        return "world"
+    return "object"
+
+
+def blender_position_to_materialx_socket(context: CompileContext, blender_position: bpy.types.NodeSocket) -> CompiledSocket:
     # MaterialX position defaults to object/model space. Blender supplies that
     # in its Z-up basis, so convert once at the geometry semantic boundary.
     separate = context.material.node_tree.nodes.new(type="ShaderNodeSeparateXYZ")
@@ -54,6 +98,18 @@ def materialx_position_socket(context: CompileContext, blender_position: bpy.typ
     context.material.node_tree.links.new(separate.outputs["Z"], combine.inputs["Y"])
     context.material.node_tree.links.new(negate_y, combine.inputs["Z"])
     return CompiledSocket(combine.outputs["Vector"], "vector3")
+
+
+def blender_object_to_world_position_socket(
+    context: CompileContext,
+    blender_position: bpy.types.NodeSocket,
+) -> bpy.types.NodeSocket:
+    transform = context.material.node_tree.nodes.new(type="ShaderNodeVectorTransform")
+    transform.vector_type = "POINT"
+    transform.convert_from = "OBJECT"
+    transform.convert_to = "WORLD"
+    context.material.node_tree.links.new(blender_position, transform.inputs["Vector"])
+    return transform.outputs["Vector"]
 
 
 def blender_direction_to_materialx_socket(context: CompileContext, blender_direction: bpy.types.NodeSocket) -> CompiledSocket:

@@ -77,7 +77,7 @@ def compile_ramp4(context: CompileContext, node: Any, scope: Any | None) -> Comp
     for index in range(component_count(output_type)):
         top = mix_component(context, component_socket(context, valuetl, index), component_socket(context, valuetr, index), s)
         bottom = mix_component(context, component_socket(context, valuebl, index), component_socket(context, valuebr, index), s)
-        components.append(mix_component(context, top, bottom, t))
+        components.append(mix_component(context, bottom, top, t))
     return combine_components(context, components, output_type)
 
 
