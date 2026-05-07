@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 import bpy
@@ -10,7 +11,9 @@ from ..blender_nodes import (
     connect_or_set_input,
     constant_socket,
     input_socket,
+    clamp01_component,
     math_socket,
+    mix_component,
     rotate2d_components,
 )
 from ..document import (
@@ -27,6 +30,19 @@ from ..values import component_count, parse_float, resolve_asset_path
 from .geometry import blender_world_direction_to_materialx_socket
 
 _MX_NODE_SUPPORT_CACHE: dict[str, bool] = {}
+_ADDRESS_MODE_EXTENSIONS = {
+    "periodic": "REPEAT",
+    "clamp": "EXTEND",
+    "constant": "CLIP",
+    "mirror": "MIRROR",
+}
+_ADDRESS_MODES = set(_ADDRESS_MODE_EXTENSIONS)
+
+
+@dataclass
+class ImageTexture:
+    node: bpy.types.Node
+    constant_mask: bpy.types.NodeSocket | None = None
 
 
 def register(registry) -> None:
@@ -47,11 +63,14 @@ def register(registry) -> None:
 
 def compile_image(context: CompileContext, image_node: Any, output_name: str, scope: Any | None) -> CompiledSocket | None:
     output_type = type_name(image_node) or "color3"
-    texture_node = create_image_texture_node(context, image_node, scope, non_color_default=is_data_image_type(output_type))
-    if texture_node is None:
+    image_texture = create_image_texture_node(context, image_node, scope, non_color_default=is_data_image_type(output_type))
+    if image_texture is None:
         return None
 
-    return compiled_texture_output(context, texture_node, output_type, output_name)
+    compiled = compiled_texture_output(context, image_texture.node, output_type, output_name)
+    if compiled is None:
+        return None
+    return apply_constant_address_default(context, image_node, compiled, output_type, output_name, scope, image_texture.constant_mask)
 
 
 def compile_gltf_image(context: CompileContext, image_node: Any, output_name: str, scope: Any | None) -> CompiledSocket | None:
@@ -143,16 +162,19 @@ def compile_gltf_image_lookup(
     scope: Any | None,
     output_type: str,
 ) -> CompiledSocket | None:
-    texture_node = create_image_texture_node(
+    image_texture = create_image_texture_node(
         context,
         image_node,
         scope,
         non_color_default=is_data_image_type(output_type),
         texcoord_override=gltf_image_texcoord_socket(context, image_node, scope),
     )
-    if texture_node is None:
+    if image_texture is None:
         return None
-    return texture_output_as_compiled(context, texture_node, output_type)
+    compiled = texture_output_as_compiled(context, image_texture.node, output_type)
+    if compiled is None:
+        return None
+    return apply_constant_address_default(context, image_node, compiled, output_type, "out", scope, image_texture.constant_mask)
 
 
 def texture_output_as_compiled(
@@ -269,15 +291,16 @@ def is_data_image_type(output_type: str) -> bool:
 
 
 def compile_gltf_normalmap(context: CompileContext, image_node: Any, output_name: str, scope: Any | None) -> CompiledSocket | None:
-    texture_node = create_image_texture_node(context, image_node, scope, non_color_default=True)
-    if texture_node is None:
+    image_texture = create_image_texture_node(context, image_node, scope, non_color_default=True)
+    if image_texture is None:
         return None
 
-    color_socket = texture_node.outputs.get("Color")
-    if color_socket is None:
+    color = texture_output_as_compiled(context, image_texture.node, "color3")
+    if color is None:
         return None
+    color = apply_constant_address_default(context, image_node, color, "color3", "out", scope, image_texture.constant_mask)
     normal_map = context.material.node_tree.nodes.new(type="ShaderNodeNormalMap")
-    context.material.node_tree.links.new(color_socket, normal_map.inputs["Color"])
+    context.material.node_tree.links.new(color.socket, normal_map.inputs["Color"])
     connect_or_set_input(context, image_node, "scale", normal_map.inputs["Strength"], 1.0, scope)
     socket = normal_map.outputs.get("Normal")
     if socket is None:
@@ -294,7 +317,7 @@ def create_image_texture_node(
     *,
     non_color_default: bool = False,
     texcoord_override: CompiledSocket | None = None,
-) -> bpy.types.Node | None:
+) -> ImageTexture | None:
     file_input = get_input(image_node, "file")
     file_value = input_value(file_input) if file_input is not None else None
     if not file_value:
@@ -316,16 +339,18 @@ def create_image_texture_node(
     texture_node.image = image
     texture_node.label = f"MaterialX {image_node.getName()}"
     configure_image_colorspace(texture_node, image_node, non_color_default)
-    configure_image_sampling(texture_node, image_node)
+    configure_image_sampling(texture_node, image_node, set_extension=False)
 
     texcoord = texcoord_override or image_texcoord_socket(context, image_node, scope)
     if category(image_node) == "tiledimage":
         texcoord = compile_tiledimage_texcoord(context, image_node, texcoord, scope)
+    texcoord, constant_mask = address_image_texcoord(context, image_node, texcoord)
     vector_input = texture_node.inputs.get("Vector")
     if vector_input is not None:
         context.material.node_tree.links.new(texcoord.socket, vector_input)
+    texture_node.extension = "EXTEND"
 
-    return texture_node
+    return ImageTexture(texture_node, constant_mask)
 
 
 def create_hextiled_image_node(
@@ -433,7 +458,7 @@ def configure_image_colorspace(texture_node: bpy.types.Node, image_node: Any, no
         set_image_colorspace(image, ("Non-Color", "Non-Color Data"))
 
 
-def configure_image_sampling(texture_node: bpy.types.Node, image_node: Any) -> None:
+def configure_image_sampling(texture_node: bpy.types.Node, image_node: Any, *, set_extension: bool = True) -> None:
     filter_input = get_input(image_node, "filtertype")
     filter_value = (input_value(filter_input) or "").lower()
     if filter_value == "closest":
@@ -441,19 +466,156 @@ def configure_image_sampling(texture_node: bpy.types.Node, image_node: Any) -> N
     elif filter_value == "cubic":
         texture_node.interpolation = "Cubic"
 
+    if not set_extension:
+        return
+
     u_mode = (input_value(get_input(image_node, "uaddressmode")) or "periodic").lower()
     v_mode = (input_value(get_input(image_node, "vaddressmode")) or "periodic").lower()
     if u_mode != v_mode:
         return
-    extension_by_mode = {
-        "periodic": "REPEAT",
-        "clamp": "EXTEND",
-        "constant": "CLIP",
-        "mirror": "MIRROR",
-    }
-    extension = extension_by_mode.get(u_mode)
+    extension = _ADDRESS_MODE_EXTENSIONS.get(u_mode)
     if extension is not None:
         texture_node.extension = extension
+
+
+def address_image_texcoord(
+    context: CompileContext,
+    image_node: Any,
+    texcoord: CompiledSocket,
+) -> tuple[CompiledSocket, bpy.types.NodeSocket | None]:
+    modes = (
+        image_address_mode(context, image_node, "uaddressmode"),
+        image_address_mode(context, image_node, "vaddressmode"),
+    )
+    adjusted_components = []
+    constant_masks = []
+
+    for index, mode in enumerate(modes):
+        coord = component_socket(context, texcoord, index)
+        if mode == "periodic":
+            adjusted = periodic_address_socket(context, coord)
+        elif mode == "mirror":
+            adjusted = mirror_address_socket(context, coord)
+        else:
+            adjusted = clamp01_component(context, coord)
+
+        adjusted_components.append(adjusted)
+        if mode == "constant":
+            constant_masks.append(outside_unit_interval_socket(context, coord))
+
+    mask = None
+    for constant_mask in constant_masks:
+        mask = constant_mask if mask is None else math_socket(context, "MAXIMUM", mask, constant_mask)
+
+    return combine_components(context, adjusted_components, "vector2"), mask
+
+
+def image_address_mode(context: CompileContext, image_node: Any, input_name: str) -> str:
+    raw_value = input_value(get_input(image_node, input_name))
+    if raw_value is None or raw_value == "":
+        return "periodic"
+
+    mode = str(raw_value).strip().lower()
+    if mode in _ADDRESS_MODES:
+        return mode
+
+    context.warnings.append(
+        f"Image node {image_node.getName()} has unsupported {input_name} '{raw_value}'; using periodic."
+    )
+    return "periodic"
+
+
+def periodic_address_socket(context: CompileContext, coord: bpy.types.NodeSocket) -> bpy.types.NodeSocket:
+    floored = math_socket(context, "FLOOR", coord, None)
+    return math_socket(context, "SUBTRACT", coord, floored)
+
+
+def mirror_address_socket(context: CompileContext, coord: bpy.types.NodeSocket) -> bpy.types.NodeSocket:
+    half_coord = math_socket(context, "DIVIDE", coord, constant_socket(context, 2.0, "float").socket)
+    wrapped = math_socket(
+        context,
+        "SUBTRACT",
+        coord,
+        math_socket(
+            context,
+            "MULTIPLY",
+            constant_socket(context, 2.0, "float").socket,
+            math_socket(context, "FLOOR", half_coord, None),
+        ),
+    )
+    distance_from_center = math_socket(
+        context,
+        "ABSOLUTE",
+        math_socket(context, "SUBTRACT", wrapped, constant_socket(context, 1.0, "float").socket),
+        None,
+    )
+    return math_socket(context, "SUBTRACT", constant_socket(context, 1.0, "float").socket, distance_from_center)
+
+
+def outside_unit_interval_socket(context: CompileContext, coord: bpy.types.NodeSocket) -> bpy.types.NodeSocket:
+    below = math_socket(context, "LESS_THAN", coord, constant_socket(context, 0.0, "float").socket)
+    above = math_socket(context, "LESS_THAN", constant_socket(context, 1.0, "float").socket, coord)
+    return math_socket(context, "MAXIMUM", below, above)
+
+
+def apply_constant_address_default(
+    context: CompileContext,
+    image_node: Any,
+    sampled: CompiledSocket,
+    output_type: str,
+    output_name: str,
+    scope: Any | None,
+    constant_mask: bpy.types.NodeSocket | None,
+) -> CompiledSocket:
+    if constant_mask is None:
+        return sampled
+
+    default_value = image_default_compiled(context, image_node, output_type, output_name, scope)
+    if component_count(sampled.type_name) == 1:
+        return CompiledSocket(
+            mix_component(context, sampled.socket, component_socket(context, default_value, 0), constant_mask),
+            sampled.type_name,
+        )
+
+    components = [
+        mix_component(
+            context,
+            component_socket(context, sampled, index),
+            component_socket(context, default_value, index),
+            constant_mask,
+        )
+        for index in range(component_count(sampled.type_name))
+    ]
+    return combine_components(context, components, sampled.type_name)
+
+
+def image_default_compiled(
+    context: CompileContext,
+    image_node: Any,
+    output_type: str,
+    output_name: str,
+    scope: Any | None,
+) -> CompiledSocket:
+    if output_name in {"outa", "a", "alpha"}:
+        if output_type in {"color4", "vector4"}:
+            default_value = input_socket(context, image_node, "default", default_value_for_image_type(output_type), scope)
+            return CompiledSocket(component_socket(context, default_value, 3), "float")
+        return constant_socket(context, 1.0, "float")
+
+    default_value = input_socket(context, image_node, "default", default_value_for_image_type(output_type), scope)
+    if output_type == "float":
+        return CompiledSocket(component_socket(context, default_value, 0), "float")
+    return default_value
+
+
+def default_value_for_image_type(output_type: str) -> float | tuple[float, ...]:
+    if output_type in {"color4", "vector4"}:
+        return (0.0, 0.0, 0.0, 0.0)
+    if output_type in {"color3", "vector3"}:
+        return (0.0, 0.0, 0.0)
+    if output_type == "vector2":
+        return (0.0, 0.0)
+    return 0.0
 
 
 def set_image_colorspace(image: bpy.types.Image, names: tuple[str, ...]) -> None:

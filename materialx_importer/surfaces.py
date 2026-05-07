@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from typing import Any
 
 import bpy
@@ -100,6 +101,7 @@ def apply_gltf_pbr_surface_inputs(context: CompileContext, surface_node: Any, pr
         "transmission": ("Transmission Weight", "Transmission"),
         "ior": ("IOR",),
         "specular": ("Specular IOR Level",),
+        "anisotropy_strength": ("Anisotropic", "Specular Anisotropy"),
         "emissive_strength": ("Emission Strength",),
     }.items():
         connect_or_set_surface_input(context, surface_node, principled, input_name, socket_names, "scalar")
@@ -114,6 +116,8 @@ def apply_gltf_pbr_surface_inputs(context: CompileContext, surface_node: Any, pr
     configure_transmission_material(context, surface_node, "transmission")
     apply_gltf_alpha_inputs(context, surface_node, principled)
     connect_or_set_surface_input(context, surface_node, principled, "normal", ("Normal",), "vector", connected_only=True)
+    connect_or_set_gltf_anisotropy_rotation(context, surface_node, principled)
+    connect_or_set_surface_input(context, surface_node, principled, "tangent", ("Tangent",), "vector", connected_only=True)
 
 
 def apply_open_pbr_surface_inputs(context: CompileContext, surface_node: Any, principled: bpy.types.Node) -> None:
@@ -265,6 +269,40 @@ def connect_or_set_surface_input(
         set_socket_default(socket, vector)
 
 
+def connect_or_set_gltf_anisotropy_rotation(
+    context: CompileContext,
+    surface_node: Any,
+    principled: bpy.types.Node,
+) -> None:
+    input_name = "anisotropy_rotation"
+    input_element = get_input(surface_node, input_name)
+    if input_element is None and get_declaration_input(surface_node, input_name) is None:
+        return
+
+    socket = principled_input(principled, ("Anisotropic Rotation", "Specular Rotation"))
+    if socket is None:
+        context.warnings.append(f"Blender Principled BSDF has no socket for MaterialX input: {input_name}")
+        return
+
+    if is_connected(input_element):
+        compiled = compile_surface_input(context, input_element, input_name, surface_scope(surface_node))
+        if compiled is None:
+            return
+        source_socket = math_socket(
+            context,
+            "MULTIPLY",
+            component_socket(context, compiled, 0),
+            constant_socket(context, -1.0 / (2.0 * math.pi), "float").socket,
+        )
+        context.material.node_tree.links.new(source_socket, socket)
+        return
+
+    value = input_value_or_default(surface_node, input_name)
+    if value is None:
+        return
+    set_scalar_socket(principled, socket.name, parse_float(value) * -1.0 / (2.0 * math.pi))
+
+
 def is_surface_direction_input(input_name: str) -> bool:
     return input_name in {
         "normal",
@@ -389,6 +427,13 @@ def configure_transmission_material(context: CompileContext, surface_node: Any, 
     configure_alpha_material(context.material, "BLEND")
 
 
+def material_output_node(material: bpy.types.Material) -> bpy.types.Node | None:
+    for node in material.node_tree.nodes:
+        if node.type == "OUTPUT_MATERIAL":
+            return node
+    return None
+
+
 def principled_input(principled: bpy.types.Node, socket_names: tuple[str, ...]) -> bpy.types.NodeSocket | None:
     for socket_name in socket_names:
         socket = principled.inputs.get(socket_name)
@@ -499,15 +544,37 @@ def apply_gltf_alpha_inputs(context: CompileContext, surface_node: Any, principl
     if alpha_mode == 0:
         return
 
-    blend_method = "CLIP" if alpha_mode == 1 else "BLEND"
     if alpha_mode == 1:
-        alpha_cutoff_value = input_value(get_input(surface_node, "alpha_cutoff"))
-        if alpha_cutoff_value is not None and hasattr(context.material, "alpha_threshold"):
-            context.material.alpha_threshold = parse_float(alpha_cutoff_value)
-        elif hasattr(context.material, "alpha_threshold"):
-            context.material.alpha_threshold = 0.5
+        apply_alpha_clip_input(context, surface_node, principled)
+        return
 
-    apply_opacity_input(context, surface_node, principled, "alpha", blend_method)
+    apply_opacity_input(context, surface_node, principled, "alpha", "BLEND")
+
+
+def apply_alpha_clip_input(context: CompileContext, surface_node: Any, principled: bpy.types.Node) -> None:
+    alpha_cutoff_value = input_value(get_input(surface_node, "alpha_cutoff"))
+    alpha_cutoff = parse_float(alpha_cutoff_value) if alpha_cutoff_value is not None else 0.5
+    if hasattr(context.material, "alpha_threshold"):
+        context.material.alpha_threshold = alpha_cutoff
+
+    alpha = surface_input_or_default(context, surface_node, "alpha", 1.0, "float")
+    cutoff = surface_input_or_default(context, surface_node, "alpha_cutoff", alpha_cutoff, "float")
+    alpha_mask = math_socket(context, "GREATER_THAN", component_socket(context, alpha, 0), component_socket(context, cutoff, 0))
+    output = material_output_node(context.material)
+    principled_bsdf = principled.outputs.get("BSDF")
+    if output is None or principled_bsdf is None:
+        context.warnings.append("Unable to build gltf_pbr alpha clip shader graph.")
+        return
+
+    transparent = context.material.node_tree.nodes.new(type="ShaderNodeBsdfTransparent")
+    mix = context.material.node_tree.nodes.new(type="ShaderNodeMixShader")
+    context.material.node_tree.links.new(alpha_mask, mix.inputs["Fac"])
+    context.material.node_tree.links.new(transparent.outputs["BSDF"], mix.inputs[1])
+    context.material.node_tree.links.new(principled_bsdf, mix.inputs[2])
+    for link in list(output.inputs["Surface"].links):
+        context.material.node_tree.links.remove(link)
+    context.material.node_tree.links.new(mix.outputs["Shader"], output.inputs["Surface"])
+    configure_alpha_material(context.material, "CLIP")
 
 
 def apply_opacity_input(

@@ -101,6 +101,7 @@ def register(registry) -> None:
     registry.register_categories(VECTOR_MATH_OPERATIONS.keys(), compile_vector_math)
     registry.register("rotate2d", compile_rotate2d)
     registry.register("rotate3d", compile_rotate3d)
+    registry.register("open_pbr_anisotropy", compile_open_pbr_anisotropy)
 
 
 def compile_math(context: CompileContext, node: Any, output_name: str, scope: Any | None) -> CompiledSocket | None:
@@ -346,3 +347,30 @@ def compile_rotate3d(context: CompileContext, node: Any, output_name: str, scope
         rotated.append(math_socket(context, "ADD", math_socket(context, "ADD", source_part, cross_part), axis_part))
 
     return combine_components(context, rotated, "vector3")
+
+
+def compile_open_pbr_anisotropy(
+    context: CompileContext,
+    node: Any,
+    output_name: str,
+    scope: Any | None,
+) -> CompiledSocket | None:
+    roughness = input_socket(context, node, "roughness", 0.0, scope)
+    anisotropy = input_socket(context, node, "anisotropy", 0.0, scope)
+
+    aniso_invert = math_socket(
+        context,
+        "SUBTRACT",
+        constant_socket(context, 1.0, "float").socket,
+        component_socket(context, anisotropy, 0),
+    )
+    aniso_invert_sq = math_socket(context, "MULTIPLY", aniso_invert, aniso_invert)
+    denom = math_socket(context, "ADD", aniso_invert_sq, constant_socket(context, 1.0, "float").socket)
+    fraction = math_socket(context, "DIVIDE", constant_socket(context, 2.0, "float").socket, denom)
+    sqrt_fraction = math_socket(context, "SQRT", fraction, None)
+    roughness_value = component_socket(context, roughness, 0)
+    roughness_sq = math_socket(context, "MULTIPLY", roughness_value, roughness_value)
+    alpha_x = math_socket(context, "MULTIPLY", roughness_sq, sqrt_fraction)
+    alpha_y = math_socket(context, "MULTIPLY", aniso_invert, alpha_x)
+
+    return combine_components(context, [alpha_x, alpha_y], "vector2")
