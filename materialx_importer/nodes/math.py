@@ -326,15 +326,15 @@ def compile_rotate3d(context: CompileContext, node: Any, output_name: str, scope
     )
 
     cross = [
-        math_socket(context, "SUBTRACT", math_socket(context, "MULTIPLY", ay, sz), math_socket(context, "MULTIPLY", az, sy)),
-        math_socket(context, "SUBTRACT", math_socket(context, "MULTIPLY", az, sx), math_socket(context, "MULTIPLY", ax, sz)),
-        math_socket(context, "SUBTRACT", math_socket(context, "MULTIPLY", ax, sy), math_socket(context, "MULTIPLY", ay, sx)),
+        math_socket(context, "SUBTRACT", math_socket(context, "MULTIPLY", sy, az), math_socket(context, "MULTIPLY", sz, ay)),
+        math_socket(context, "SUBTRACT", math_socket(context, "MULTIPLY", sz, ax), math_socket(context, "MULTIPLY", sx, az)),
+        math_socket(context, "SUBTRACT", math_socket(context, "MULTIPLY", sx, ay), math_socket(context, "MULTIPLY", sy, ax)),
     ]
     source_components = [sx, sy, sz]
     axis_components = [ax, ay, az]
     rotated = []
     for index in range(3):
-        # Rodrigues' rotation formula: v*cos(theta) + (k x v)*sin(theta) + k*(k dot v)*(1 - cos(theta)).
+        # MaterialX's matrix convention is equivalent to v*cos(theta) + (v x k)*sin(theta) + k*(k dot v)*(1 - cos(theta)).
         source_part = math_socket(context, "MULTIPLY", source_components[index], cosine)
         cross_part = math_socket(context, "MULTIPLY", cross[index], sine)
         axis_part = math_socket(
