@@ -9,6 +9,7 @@ from .document import get_input, input_type_or_default, input_value, input_value
 from .types import CompileContext, CompiledSocket
 from .values import (
     COMPONENT_TYPES,
+    blender_backing_vector_source_index,
     component_count,
     default_type_for_value,
     parse_bool_float,
@@ -235,7 +236,8 @@ def combine_components(
         return CompiledSocket(components[0], "float")
     combine = context.material.node_tree.nodes.new(type="ShaderNodeCombineXYZ")
     for index, socket_name in enumerate(("X", "Y", "Z")):
-        source = components[min(index, len(components) - 1)]
+        source_index = blender_backing_vector_source_index(output_type, index, len(components))
+        source = components[source_index] if source_index is not None else constant_socket(context, 0.0, "float").socket
         context.material.node_tree.links.new(source, combine.inputs[socket_name])
     return CompiledSocket(combine.outputs["Vector"], output_type, components=components)
 

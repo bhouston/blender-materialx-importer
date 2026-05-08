@@ -1,5 +1,19 @@
 from __future__ import annotations
 
+from materialx_importer.values import blender_backing_vector_source_index
+
+
+def test_vector2_uses_zero_for_hidden_blender_z_channel() -> None:
+    assert blender_backing_vector_source_index("vector2", 0, 2) == 0
+    assert blender_backing_vector_source_index("vector2", 1, 2) == 1
+    assert blender_backing_vector_source_index("vector2", 2, 2) is None
+
+
+def test_non_vector2_types_keep_existing_component_mapping() -> None:
+    assert blender_backing_vector_source_index("color3", 2, 3) == 2
+    assert blender_backing_vector_source_index("vector4", 2, 4) == 2
+from __future__ import annotations
+
 from pathlib import Path
 
 from materialx_importer.values import (

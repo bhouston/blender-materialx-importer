@@ -100,6 +100,14 @@ def component_count(type_name: str) -> int:
     return 1
 
 
+def blender_backing_vector_source_index(type_name: str, index: int, component_total: int) -> int | None:
+    if component_total <= 0:
+        return None
+    if type_name == "vector2" and index == 2:
+        return None
+    return min(index, component_total - 1)
+
+
 def parse_color(value: Any) -> tuple[float, float, float, float]:
     if isinstance(value, (list, tuple)):
         pieces = [float(piece) for piece in value]
