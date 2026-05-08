@@ -132,6 +132,21 @@ def attribute(element: Any, name: str) -> str | None:
     return value if value else None
 
 
+def inherited_attribute(element: Any | None, name: str) -> str | None:
+    visited: set[int] = set()
+    current = element
+    while current is not None:
+        current_id = id(current)
+        if current_id in visited:
+            return None
+        visited.add(current_id)
+        value = attribute(current, name)
+        if value is not None:
+            return value
+        current = call_optional(current, "getParent")
+    return None
+
+
 def category(element: Any) -> str:
     try:
         return element.getCategory()

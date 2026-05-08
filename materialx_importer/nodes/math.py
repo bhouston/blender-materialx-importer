@@ -102,6 +102,7 @@ def register(registry) -> None:
     registry.register("rotate2d", compile_rotate2d)
     registry.register("rotate3d", compile_rotate3d)
     registry.register("open_pbr_anisotropy", compile_open_pbr_anisotropy)
+    registry.register("artistic_ior", compile_artistic_ior)
 
 
 def compile_math(context: CompileContext, node: Any, output_name: str, scope: Any | None) -> CompiledSocket | None:
@@ -374,3 +375,80 @@ def compile_open_pbr_anisotropy(
     alpha_y = math_socket(context, "MULTIPLY", aniso_invert, alpha_x)
 
     return combine_components(context, [alpha_x, alpha_y], "vector2")
+
+
+def compile_artistic_ior(
+    context: CompileContext,
+    node: Any,
+    output_name: str,
+    scope: Any | None,
+) -> CompiledSocket | None:
+    reflectivity = input_socket(context, node, "reflectivity", (0.944, 0.776, 0.373), scope)
+    edge_color = input_socket(context, node, "edge_color", (0.998, 0.981, 0.751), scope)
+    zero = constant_socket(context, 0.0, "float").socket
+    one = constant_socket(context, 1.0, "float").socket
+    max_reflectivity = constant_socket(context, 0.99, "float").socket
+
+    ior_components = []
+    extinction_components = []
+
+    for index in range(3):
+        r = math_socket(
+            context,
+            "MINIMUM",
+            math_socket(context, "MAXIMUM", component_socket(context, reflectivity, index), zero),
+            max_reflectivity,
+        )
+        edge_tint = component_socket(context, edge_color, index)
+        r_sqrt = math_socket(context, "SQRT", r, None)
+
+        n_min = math_socket(
+            context,
+            "DIVIDE",
+            math_socket(context, "SUBTRACT", one, r),
+            math_socket(context, "ADD", one, r),
+        )
+        n_max = math_socket(
+            context,
+            "DIVIDE",
+            math_socket(context, "ADD", one, r_sqrt),
+            math_socket(context, "SUBTRACT", one, r_sqrt),
+        )
+        ior = math_socket(
+            context,
+            "ADD",
+            math_socket(context, "MULTIPLY", n_max, math_socket(context, "SUBTRACT", one, edge_tint)),
+            math_socket(context, "MULTIPLY", n_min, edge_tint),
+        )
+
+        ior_plus_one = math_socket(context, "ADD", ior, one)
+        ior_minus_one = math_socket(context, "SUBTRACT", ior, one)
+        numerator = math_socket(
+            context,
+            "SUBTRACT",
+            math_socket(
+                context,
+                "MULTIPLY",
+                math_socket(context, "MULTIPLY", ior_plus_one, ior_plus_one),
+                r,
+            ),
+            math_socket(context, "MULTIPLY", ior_minus_one, ior_minus_one),
+        )
+        k2 = math_socket(
+            context,
+            "MAXIMUM",
+            math_socket(
+                context,
+                "DIVIDE",
+                numerator,
+                math_socket(context, "SUBTRACT", one, r),
+            ),
+            zero,
+        )
+
+        ior_components.append(ior)
+        extinction_components.append(math_socket(context, "SQRT", k2, None))
+
+    if output_name == "extinction":
+        return combine_components(context, extinction_components, "color3")
+    return combine_components(context, ior_components, "color3")

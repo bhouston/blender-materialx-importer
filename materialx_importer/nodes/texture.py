@@ -21,6 +21,7 @@ from ..document import (
     category,
     connected_node,
     get_input,
+    inherited_attribute,
     input_value,
     input_value_or_default,
     type_name,
@@ -37,6 +38,11 @@ _ADDRESS_MODE_EXTENSIONS = {
     "mirror": "MIRROR",
 }
 _ADDRESS_MODES = set(_ADDRESS_MODE_EXTENSIONS)
+_MATERIALX_IMAGE_COLORSPACES = {
+    "lin_rec709": ("Linear Rec.709", "Linear sRGB", "Linear"),
+    "srgb_texture": ("sRGB", "sRGB OETF"),
+    "none": ("Raw", "Non-Color", "Non-Color Data"),
+}
 
 
 @dataclass
@@ -452,10 +458,15 @@ def configure_image_colorspace(texture_node: bpy.types.Node, image_node: Any, no
     if image is None:
         return
 
+    if non_color_default:
+        set_image_colorspace(image, ("Non-Color", "Non-Color Data", "Raw"))
+        return
+
     file_input = get_input(image_node, "file")
-    color_space = (attribute(file_input, "colorspace") or "").lower()
-    if non_color_default and not color_space:
-        set_image_colorspace(image, ("Non-Color", "Non-Color Data"))
+    color_space = (inherited_attribute(file_input or image_node, "colorspace") or "").lower()
+    blender_color_spaces = _MATERIALX_IMAGE_COLORSPACES.get(color_space)
+    if blender_color_spaces is not None:
+        set_image_colorspace(image, blender_color_spaces)
 
 
 def configure_image_sampling(texture_node: bpy.types.Node, image_node: Any, *, set_extension: bool = True) -> None:

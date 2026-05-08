@@ -65,6 +65,7 @@ def compile_geometry_category(context: CompileContext, category: str, space: str
         socket = node.outputs.get("Incoming")
         if socket is None:
             return None
+        socket = negate_direction_socket(context, socket)
         if space != "world":
             socket = blender_world_to_object_direction_socket(context, socket, "NORMAL")
         return blender_direction_to_materialx_socket(context, socket)
@@ -170,6 +171,14 @@ def blender_object_to_world_direction_socket(
     transform.convert_to = "WORLD"
     context.material.node_tree.links.new(blender_direction, transform.inputs["Vector"])
     return transform.outputs["Vector"]
+
+
+def negate_direction_socket(context: CompileContext, direction: bpy.types.NodeSocket) -> bpy.types.NodeSocket:
+    scale = context.material.node_tree.nodes.new(type="ShaderNodeVectorMath")
+    scale.operation = "SCALE"
+    context.material.node_tree.links.new(direction, scale.inputs[0])
+    scale.inputs[3].default_value = -1.0
+    return scale.outputs["Vector"]
 
 
 def convert_direction_basis_socket(
