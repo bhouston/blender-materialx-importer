@@ -8,7 +8,11 @@ from ..blender_nodes import combine_components, component_socket, constant_socke
 from ..document import attribute, get_input, input_value, is_connected, type_name
 from ..types import CompileContext, CompiledMatrix, CompiledSocket
 from ..values import identity_matrix_values, matrix_size, parse_matrix
-from .geometry import blender_direction_to_materialx_socket, materialx_direction_to_blender_socket
+from .geometry import (
+    blender_direction_to_materialx_socket,
+    convert_direction_basis_socket,
+    materialx_direction_to_blender_socket,
+)
 
 
 VECTOR_OUTPUTS = {
@@ -139,12 +143,22 @@ def compile_space_transform(context: CompileContext, node: Any, output_name: str
     if from_space is None or to_space is None or from_space == "" or to_space == "" or from_space == to_space:
         socket = source.socket
     else:
+        # ShaderNodeVectorTransform interprets vectors in Blender basis.
+        # Convert MaterialX basis -> Blender basis before the transform.
+        blender_source = convert_direction_basis_socket(context, source.socket, blender_to_materialx=False)
         transform = context.material.node_tree.nodes.new(type="ShaderNodeVectorTransform")
         transform.vector_type = {"transformpoint": "POINT", "transformvector": "VECTOR", "transformnormal": "NORMAL"}[category]
         transform.convert_from = from_space
         transform.convert_to = to_space
-        context.material.node_tree.links.new(source.socket, transform.inputs["Vector"])
-        socket = transform.outputs["Vector"]
+        context.material.node_tree.links.new(blender_source.socket, transform.inputs["Vector"])
+
+        # Convert Blender basis -> MaterialX basis after the transform.
+        materialx_result = convert_direction_basis_socket(
+            context,
+            transform.outputs["Vector"],
+            blender_to_materialx=True,
+        )
+        socket = materialx_result.socket
 
     return _select_vector_output(context, CompiledSocket(socket, "vector3"), output_name)
 
