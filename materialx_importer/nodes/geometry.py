@@ -42,13 +42,20 @@ def compile_geometry_category(context: CompileContext, category: str, space: str
         if space == "world":
             socket = blender_object_to_world_position_socket(context, socket)
         return blender_position_to_materialx_socket(context, socket)
-    if category in {"normal", "tangent"}:
+    if category == "normal":
         node = nodes.new(type="ShaderNodeNewGeometry")
-        socket = node.outputs.get("Tangent" if category == "tangent" else "Normal")
+        socket = node.outputs.get("Normal")
         if socket is None:
             return None
         if space != "world":
-            socket = blender_world_to_object_direction_socket(context, socket, "NORMAL" if category == "normal" else "VECTOR")
+            socket = blender_world_to_object_direction_socket(context, socket, "NORMAL")
+        return blender_direction_to_materialx_socket(context, socket)
+    if category == "tangent":
+        socket = blender_tangent_socket(context)
+        if socket is None:
+            return None
+        if space != "world":
+            socket = blender_world_to_object_direction_socket(context, socket, "VECTOR")
         return blender_direction_to_materialx_socket(context, socket)
     if category == "bitangent":
         normal = compile_geometry_category(context, "normal", space)
@@ -120,6 +127,13 @@ def blender_direction_to_materialx_socket(context: CompileContext, blender_direc
     normalize.operation = "NORMALIZE"
     context.material.node_tree.links.new(converted.socket, normalize.inputs[0])
     return CompiledSocket(normalize.outputs["Vector"], "vector3", "unit_vector")
+
+
+def blender_tangent_socket(context: CompileContext) -> bpy.types.NodeSocket | None:
+    tangent_node = context.material.node_tree.nodes.new(type="ShaderNodeTangent")
+    tangent_node.direction_type = "UV_MAP"
+    tangent_node.uv_map = ""
+    return tangent_node.outputs.get("Tangent")
 
 
 def blender_world_direction_to_materialx_socket(
