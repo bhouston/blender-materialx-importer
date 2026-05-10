@@ -955,6 +955,21 @@ def compile_materialx_normalmap(
         math_socket(context, "MULTIPLY", source_z, constant_socket(context, 2.0, "float").socket),
         constant_socket(context, 1.0, "float").socket,
     )
+    length_sq = math_socket(
+        context,
+        "ADD",
+        math_socket(
+            context,
+            "ADD",
+            math_socket(context, "MULTIPLY", source_x, source_x),
+            math_socket(context, "MULTIPLY", source_y, source_y),
+        ),
+        math_socket(context, "MULTIPLY", source_z, source_z),
+    )
+    use_fallback = math_socket(context, "LESS_THAN", length_sq, constant_socket(context, 1e-8, "float").socket)
+    decoded_x = mix_component(context, decoded_x, constant_socket(context, 0.0, "float").socket, use_fallback)
+    decoded_y = mix_component(context, decoded_y, constant_socket(context, 0.0, "float").socket, use_fallback)
+    decoded_z = mix_component(context, decoded_z, constant_socket(context, 1.0, "float").socket, use_fallback)
 
     scale_x = component_socket(context, scale, 0)
     scale_y = component_socket(context, scale, 1)
@@ -991,6 +1006,10 @@ def normal_basis_input_socket(
         compiled = context.compiler.compile_input(input_element, scope)
         if isinstance(compiled, CompiledSocket):
             return compiled
+
+    explicit_value = input_value(input_element)
+    if explicit_value is not None:
+        return constant_socket(context, explicit_value, "vector3")
 
     declaration_input = get_declaration_input(node, input_name)
     geomprop = (attribute(input_element, "defaultgeomprop") or attribute(declaration_input, "defaultgeomprop") or "").lower()
