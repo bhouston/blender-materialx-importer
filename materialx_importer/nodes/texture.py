@@ -20,6 +20,7 @@ from ..document import (
     attribute,
     category,
     connected_node,
+    get_declaration_input,
     get_input,
     inherited_attribute,
     input_value,
@@ -28,7 +29,11 @@ from ..document import (
 )
 from ..types import CompileContext, CompiledSocket
 from ..values import component_count, parse_float, resolve_asset_path
-from .geometry import blender_world_direction_to_materialx_socket, materialx_direction_to_blender_world_socket
+from .geometry import (
+    blender_world_direction_to_materialx_socket,
+    compile_geometry_category,
+    materialx_direction_to_blender_world_socket,
+)
 
 _MX_NODE_SUPPORT_CACHE: dict[str, bool] = {}
 _ADDRESS_MODE_EXTENSIONS = {
@@ -264,15 +269,19 @@ def compile_hextilednormalmap(
     color_socket = texture_node.outputs.get("Color")
     if color_socket is None:
         return None
-    normal_map = context.material.node_tree.nodes.new(type="ShaderNodeNormalMap")
-    context.material.node_tree.links.new(color_socket, normal_map.inputs["Color"])
-    connect_or_set_input(context, image_node, "strength", normal_map.inputs["Strength"], 1.0, scope)
-    socket = normal_map.outputs.get("Normal")
-    if socket is None:
+    source = CompiledSocket(color_socket, "vector3")
+    normal = compile_materialx_normalmap(
+        context,
+        image_node,
+        source,
+        scope,
+        scale_input_name="strength",
+        flip_g_input_name="flip_g",
+    )
+    if normal is None:
         return None
-    compiled = blender_world_direction_to_materialx_socket(context, socket)
-    compiled.semantic = "normal"
-    return compiled
+    normal.semantic = "normal"
+    return normal
 
 
 def compiled_texture_output(
@@ -796,30 +805,41 @@ def operation_order(context: CompileContext, node: Any, scope: Any | None, defau
 
 def compile_normalmap(context: CompileContext, node: Any, output_name: str, scope: Any | None) -> CompiledSocket | None:
     source = input_socket(context, node, "in", (0.5, 0.5, 1.0), scope)
-    if source.semantic == "normal":
-        return source
-
-    normal_map = context.material.node_tree.nodes.new(type="ShaderNodeNormalMap")
-    context.material.node_tree.links.new(source.socket, normal_map.inputs["Color"])
-    connect_or_set_input(context, node, "scale", normal_map.inputs["Strength"], 1.0, scope)
-    socket = normal_map.outputs.get("Normal")
-    if socket is None:
+    normal = compile_materialx_normalmap(context, node, source, scope, scale_input_name="scale")
+    if normal is None:
         return None
-    compiled = blender_world_direction_to_materialx_socket(context, socket)
-    compiled.semantic = "normal"
-    return compiled
+    normal.semantic = "normal"
+    return normal
 
 
 def compile_heighttonormal(context: CompileContext, node: Any, output_name: str, scope: Any | None) -> CompiledSocket | None:
     bump = context.material.node_tree.nodes.new(type="ShaderNodeBump")
     connect_or_set_input(context, node, "in", bump.inputs["Height"], 0.0, scope)
-    connect_or_set_input(context, node, "scale", bump.inputs["Strength"], 1.0, scope)
+    bump.inputs["Strength"].default_value = 1.0
+    distance_input = bump.inputs.get("Distance")
+    if distance_input is not None:
+        connect_or_set_input(context, node, "scale", distance_input, 1.0, scope)
+    else:
+        connect_or_set_input(context, node, "scale", bump.inputs["Strength"], 1.0, scope)
     socket = bump.outputs.get("Normal")
     if socket is None:
         return None
-    compiled = blender_world_direction_to_materialx_socket(context, socket)
-    compiled.semantic = "normal"
-    return compiled
+    normal_world = blender_world_direction_to_materialx_socket(context, socket)
+
+    world_normal = compile_geometry_category(context, "normal", "world")
+    world_tangent = compile_geometry_category(context, "tangent", "world")
+    world_bitangent = compile_geometry_category(context, "bitangent", "world")
+    if world_normal is None or world_tangent is None or world_bitangent is None:
+        return encode_normal_for_normalmap(context, normal_world)
+
+    normal_components = normal_components_from_basis(
+        context,
+        normal_world,
+        world_normal,
+        world_tangent,
+        world_bitangent,
+    )
+    return encode_normal_for_normalmap(context, normal_components)
 
 
 def compile_circle(context: CompileContext, node: Any, output_name: str, scope: Any | None) -> CompiledSocket | None:
@@ -893,3 +913,165 @@ def compile_bump(context: CompileContext, node: Any, output_name: str, scope: An
     compiled = blender_world_direction_to_materialx_socket(context, socket)
     compiled.semantic = "normal"
     return compiled
+
+
+def compile_materialx_normalmap(
+    context: CompileContext,
+    node: Any,
+    source: CompiledSocket,
+    scope: Any | None,
+    *,
+    scale_input_name: str,
+    flip_g_input_name: str | None = None,
+) -> CompiledSocket | None:
+    scale = input_socket(context, node, scale_input_name, 1.0, scope)
+    normal = normal_basis_input_socket(context, node, "normal", (0.0, 0.0, 1.0), scope)
+    tangent = normal_basis_input_socket(context, node, "tangent", (1.0, 0.0, 0.0), scope)
+    bitangent = normal_basis_input_socket(context, node, "bitangent", (0.0, 1.0, 0.0), scope)
+
+    source_x = component_socket(context, source, 0)
+    source_y = component_socket(context, source, 1)
+    source_z = component_socket(context, source, 2)
+    if flip_g_input_name is not None:
+        flip_factor = component_socket(context, input_socket(context, node, flip_g_input_name, False, scope), 0)
+        one_minus_y = math_socket(context, "SUBTRACT", constant_socket(context, 1.0, "float").socket, source_y)
+        source_y = mix_component(context, source_y, one_minus_y, flip_factor)
+
+    decoded_x = math_socket(
+        context,
+        "SUBTRACT",
+        math_socket(context, "MULTIPLY", source_x, constant_socket(context, 2.0, "float").socket),
+        constant_socket(context, 1.0, "float").socket,
+    )
+    decoded_y = math_socket(
+        context,
+        "SUBTRACT",
+        math_socket(context, "MULTIPLY", source_y, constant_socket(context, 2.0, "float").socket),
+        constant_socket(context, 1.0, "float").socket,
+    )
+    decoded_z = math_socket(
+        context,
+        "SUBTRACT",
+        math_socket(context, "MULTIPLY", source_z, constant_socket(context, 2.0, "float").socket),
+        constant_socket(context, 1.0, "float").socket,
+    )
+
+    scale_x = component_socket(context, scale, 0)
+    scale_y = component_socket(context, scale, 1)
+    tangent_weight = math_socket(context, "MULTIPLY", decoded_x, scale_x)
+    bitangent_weight = math_socket(context, "MULTIPLY", decoded_y, scale_y)
+
+    normal_components = [
+        math_socket(
+            context,
+            "ADD",
+            math_socket(
+                context,
+                "ADD",
+                math_socket(context, "MULTIPLY", component_socket(context, tangent, index), tangent_weight),
+                math_socket(context, "MULTIPLY", component_socket(context, bitangent, index), bitangent_weight),
+            ),
+            math_socket(context, "MULTIPLY", component_socket(context, normal, index), decoded_z),
+        )
+        for index in range(3)
+    ]
+    raw = combine_components(context, normal_components, "vector3")
+    return normalize_vector_socket(context, raw)
+
+
+def normal_basis_input_socket(
+    context: CompileContext,
+    node: Any,
+    input_name: str,
+    default_value: tuple[float, float, float],
+    scope: Any | None,
+) -> CompiledSocket:
+    input_element = get_input(node, input_name)
+    if input_element is not None and context.compiler is not None:
+        compiled = context.compiler.compile_input(input_element, scope)
+        if isinstance(compiled, CompiledSocket):
+            return compiled
+
+    declaration_input = get_declaration_input(node, input_name)
+    geomprop = (attribute(input_element, "defaultgeomprop") or attribute(declaration_input, "defaultgeomprop") or "").lower()
+    geometry_default = compile_default_geomprop_socket(context, geomprop)
+    if geometry_default is not None:
+        return geometry_default
+
+    value = input_value_or_default(node, input_name)
+    if value is not None:
+        return constant_socket(context, value, "vector3")
+    return constant_socket(context, default_value, "vector3")
+
+
+def compile_default_geomprop_socket(context: CompileContext, geomprop: str) -> CompiledSocket | None:
+    geomprop_map = {
+        "nworld": ("normal", "world"),
+        "tworld": ("tangent", "world"),
+        "bworld": ("bitangent", "world"),
+        "nobject": ("normal", "object"),
+        "tobject": ("tangent", "object"),
+        "bobject": ("bitangent", "object"),
+        "nmodel": ("normal", "object"),
+        "tmodel": ("tangent", "object"),
+        "bmodel": ("bitangent", "object"),
+    }
+    mapping = geomprop_map.get(geomprop)
+    if mapping is None:
+        return None
+    return compile_geometry_category(context, mapping[0], mapping[1])
+
+
+def normalize_vector_socket(context: CompileContext, value: CompiledSocket) -> CompiledSocket:
+    normalize = context.material.node_tree.nodes.new(type="ShaderNodeVectorMath")
+    normalize.operation = "NORMALIZE"
+    context.material.node_tree.links.new(value.socket, normalize.inputs[0])
+    return CompiledSocket(normalize.outputs["Vector"], "vector3")
+
+
+def vector_dot_socket(context: CompileContext, left: CompiledSocket, right: CompiledSocket) -> bpy.types.NodeSocket:
+    dot = context.material.node_tree.nodes.new(type="ShaderNodeVectorMath")
+    dot.operation = "DOT_PRODUCT"
+    context.material.node_tree.links.new(left.socket, dot.inputs[0])
+    context.material.node_tree.links.new(right.socket, dot.inputs[1])
+    return dot.outputs["Value"]
+
+
+def normal_components_from_basis(
+    context: CompileContext,
+    normal: CompiledSocket,
+    basis_normal: CompiledSocket,
+    basis_tangent: CompiledSocket,
+    basis_bitangent: CompiledSocket,
+) -> CompiledSocket:
+    normalized_normal = normalize_vector_socket(context, normal)
+    normalized_basis_normal = normalize_vector_socket(context, basis_normal)
+    normalized_basis_tangent = normalize_vector_socket(context, basis_tangent)
+    normalized_basis_bitangent = normalize_vector_socket(context, basis_bitangent)
+    return combine_components(
+        context,
+        [
+            vector_dot_socket(context, normalized_normal, normalized_basis_tangent),
+            vector_dot_socket(context, normalized_normal, normalized_basis_bitangent),
+            vector_dot_socket(context, normalized_normal, normalized_basis_normal),
+        ],
+        "vector3",
+    )
+
+
+def encode_normal_for_normalmap(context: CompileContext, normal: CompiledSocket) -> CompiledSocket:
+    encoded_components = [
+        math_socket(
+            context,
+            "ADD",
+            math_socket(
+                context,
+                "MULTIPLY",
+                component_socket(context, normal, index),
+                constant_socket(context, 0.5, "float").socket,
+            ),
+            constant_socket(context, 0.5, "float").socket,
+        )
+        for index in range(3)
+    ]
+    return combine_components(context, encoded_components, "vector3")
