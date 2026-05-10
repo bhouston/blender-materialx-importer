@@ -28,7 +28,7 @@ from ..document import (
 )
 from ..types import CompileContext, CompiledSocket
 from ..values import component_count, parse_float, resolve_asset_path
-from .geometry import blender_world_direction_to_materialx_socket
+from .geometry import blender_world_direction_to_materialx_socket, materialx_direction_to_blender_world_socket
 
 _MX_NODE_SUPPORT_CACHE: dict[str, bool] = {}
 _ADDRESS_MODE_EXTENSIONS = {
@@ -882,8 +882,11 @@ def compile_bump(context: CompileContext, node: Any, output_name: str, scope: An
     connect_or_set_input(context, node, "height", bump.inputs["Height"], 0.0, scope)
     connect_or_set_input(context, node, "scale", bump.inputs["Strength"], 1.0, scope)
     normal_input = bump.inputs.get("Normal")
-    if normal_input is not None:
-        connect_or_set_input(context, node, "normal", normal_input, (0.0, 0.0, 1.0), scope)
+    normal_element = get_input(node, "normal")
+    if normal_input is not None and normal_element is not None:
+        compiled_normal = input_socket(context, node, "normal", (0.0, 0.0, 1.0), scope)
+        blender_normal = materialx_direction_to_blender_world_socket(context, compiled_normal)
+        context.material.node_tree.links.new(blender_normal.socket, normal_input)
     socket = bump.outputs.get("Normal")
     if socket is None:
         return None
