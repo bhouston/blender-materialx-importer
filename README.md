@@ -66,7 +66,7 @@ Supported MaterialX node categories:
 - Texture and placement: `bump`, `checkerboard`, `circle`, `gltf_anisotropy_image`, `gltf_colorimage`, `gltf_image`, `gltf_normalmap`, `heighttonormal`, `image`, `normalmap`, `place2d`, `tiledimage`.
 - Geometry: `bitangent`, `frame`, `normal`, `position`, `tangent`, `texcoord`, `time`, `viewdirection`.
 - Procedural noise: `cellnoise2d`, `cellnoise3d`, `fractal2d`, `fractal3d`, `noise2d`, `noise3d`, `unifiednoise2d`, `unifiednoise3d`, `worley2d`, `worley3d`, `worleynoise2d`, `worleynoise3d`.
-- Logic and conditionals: `and`, `ifequal`, `ifgreater`, `ifgreatereq`, `not`, `or`, `xor`.
+- Logic and conditionals: `and`, `ifequal`, `ifgreater`, `ifgreatereq`, `not`, `or`, `switch`, `xor`.
 - Color: `blackbody`, `colorcorrect`, `contrast`, `hsvtorgb`, `luminance`, `rgbtohsv`, `saturate`, `unpremult`.
 - Matrix and space transforms: `creatematrix`, `determinant`, `invertmatrix`, `transformmatrix`, `transformnormal`, `transformpoint`, `transformvector`, `transpose`.
 - Ramps: `ramp`, `ramp_gradient`, `ramp4`, `ramplr`, `ramptb`, `splitlr`, `splittb`.
