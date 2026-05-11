@@ -17,6 +17,7 @@ from ..blender_nodes import (
     input_socket,
     map_range_component,
     math_socket,
+    mix_component,
     rotate2d_components,
     smoothstep_component,
 )
@@ -108,6 +109,8 @@ def register(registry) -> None:
 def compile_math(context: CompileContext, node: Any, output_name: str, scope: Any | None) -> CompiledSocket | None:
     node_category = category(node)
     output_type = type_name(node)
+    if node_category in {"asin", "acos"}:
+        return compile_inverse_trig(context, node, output_type, scope)
     operation = SCALAR_MATH_OPERATIONS[node_category]
     if output_type in COMPONENT_TYPES:
         if node_category in BINARY_INPUTS:
@@ -126,6 +129,34 @@ def compile_math(context: CompileContext, node: Any, output_name: str, scope: An
         input_name, default = UNARY_INPUTS[node_category]
         connect_or_set_input(context, node, input_name, math_node.inputs[0], default, scope)
     return CompiledSocket(math_node.outputs[0], "float")
+
+
+def compile_inverse_trig(
+    context: CompileContext,
+    node: Any,
+    output_type: str | None,
+    scope: Any | None,
+) -> CompiledSocket | None:
+    node_category = category(node)
+    operation = "ARCSINE" if node_category == "asin" else "ARCCOSINE"
+    source = input_socket(context, node, "in", 0.0, scope)
+    zero = constant_socket(context, 0.0, "float").socket
+    one = constant_socket(context, 1.0, "float").socket
+
+    if output_type in COMPONENT_TYPES:
+        components: list[bpy.types.NodeSocket] = []
+        for index in range(component_count(output_type)):
+            component = component_socket(context, source, index)
+            inverse_trig_value = math_socket(context, operation, component, None)
+            outside_domain = math_socket(context, "LESS_THAN", one, math_socket(context, "ABSOLUTE", component, None))
+            components.append(mix_component(context, inverse_trig_value, zero, outside_domain))
+        return combine_components(context, components, output_type)
+
+    math_node = context.material.node_tree.nodes.new(type="ShaderNodeMath")
+    math_node.operation = operation
+    context.material.node_tree.links.new(source.socket, math_node.inputs[0])
+    outside_domain = math_socket(context, "LESS_THAN", one, math_socket(context, "ABSOLUTE", source.socket, None))
+    return CompiledSocket(mix_component(context, math_node.outputs[0], zero, outside_domain), "float")
 
 
 def compile_clamp(context: CompileContext, node: Any, output_name: str, scope: Any | None) -> CompiledSocket | None:
